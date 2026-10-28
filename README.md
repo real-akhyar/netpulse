@@ -258,6 +258,25 @@ All bundled in [`netpulse/data/`](netpulse/data/SOURCES.md) and [`netpulse/web/v
 | World outlines | [Natural Earth](https://www.naturalearthdata.com/) 1:110m | 2026-10-28 | Public domain |
 | Globe renderer | [globe.gl](https://github.com/vasturiano/globe.gl) 2.46.2 (includes three.js) | — | MIT |
 
+## Development
+
+```bash
+pip install -e ".[dev]"
+python -m pytest
+```
+
+The default suite is offline and safe to run anywhere: it uses throwaway data folders, a scratch
+hosts file and dry-run firewall changes, and fails if your real hosts file changes. The
+one-click-block tests run on Windows only. CI runs it on Windows (Python 3.11 and 3.13) and Ubuntu.
+
+The live end-to-end tests start a probe process that really contacts a few trackers and beacons to
+example.com while netpulse watches. They need internet, take about 4 minutes, and fail if you've
+blocked those trackers in your own hosts file:
+
+```bash
+python -m pytest -m live
+```
+
 ## Roadmap
 
 - **One-click blocking on macOS & Linux** — today it's Windows-only; the exports work everywhere.

@@ -19,6 +19,9 @@ dependencies = [
     "rich>=13.7",
 ]
 
+[project.optional-dependencies]
+dev = ["pytest>=8", "httpx>=0.27"]
+
 [project.scripts]
 netpulse = "netpulse.cli:main"
 
@@ -27,3 +30,9 @@ include = ["netpulse*"]
 
 [tool.setuptools.package-data]
 netpulse = ["web/*", "web/vendor/*", "data/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-m 'not live'"
+markers = ["live: real connections + internet; run with `pytest -m live`"]
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient`"]
