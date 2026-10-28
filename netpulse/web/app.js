@@ -233,6 +233,8 @@ function worstAlert(p) {
 function culpritRow(p) {
   const alert = worstAlert(p);
   const hot = p.malware_count || p.tracker_count || (alert && SEVERITY[alert.severity] >= SEVERITY.critical);
+  const blockedApps = (state.stats && state.stats.blocks && state.stats.blocks.apps) || [];
+  const blockedChip = blockedApps.includes(p.name) ? '<span class="chip blocked">🚫 blocked</span>' : '';
   const malwareChip = p.malware_count
     ? `<span class="chip malware">☠ known malware${p.malware_count > 1 ? ` ×${p.malware_count}` : ''}</span>` : '';
   const kind = hot ? '' : isCulprit(p) ? 'mild' : 'clean';
@@ -241,8 +243,8 @@ function culpritRow(p) {
   const fresh = state.fresh.has(p.app) ? 'fresh' : '';
   const sigChip = p.info && (p.info.signature === 'unsigned' || p.info.signature === 'invalid')
     ? `<span class="chip suspicious">${p.info.signature === 'unsigned' ? '⚠ unsigned' : '✖ bad signature'}</span>` : '';
-  const chips = p.top_trackers.length || sigChip || alertChip || malwareChip
-    ? `<div class="chips">${malwareChip}${alertChip}${sigChip}${p.top_trackers.slice(0, 4).map((d) => `<span class="chip tracker">${esc(d)}</span>`).join('')}</div>`
+  const chips = p.top_trackers.length || sigChip || alertChip || malwareChip || blockedChip
+    ? `<div class="chips">${blockedChip}${malwareChip}${alertChip}${sigChip}${p.top_trackers.slice(0, 4).map((d) => `<span class="chip tracker">${esc(d)}</span>`).join('')}</div>`
     : '';
   const block = isCulprit(p) ? `<div class="c-actions">
       <button type="button" class="block" data-block="${esc(p.app)}">Block</button>
@@ -637,6 +639,13 @@ function openBlock(app) {
   $('modal-title').textContent = p ? `Block ${p.name}` : 'Export blocklist — everything caught';
   const ua = navigator.userAgent;
   for (const tab of document.querySelectorAll('.tab[data-os]')) tab.hidden = !ua.includes(tab.dataset.os);
+  const canApply = !!(state.stats && state.stats.blocks && state.stats.blocks.supported);
+  $('modal-apply').hidden = !canApply;
+  $('modal-apply').disabled = false;
+  $('modal-note').className = 'note';
+  $('modal-note').textContent = canApply
+    ? 'Block now edits your hosts file and firewall for you (one Windows admin prompt) — undo anytime under "Blocked". Or copy the rules and apply them yourself.'
+    : 'Add these to your hosts file / firewall to block. (One-click blocking is Windows-only for now.)';
   $('modal').hidden = false;
   loadRules();
   $('modal-copy').focus();
@@ -698,6 +707,62 @@ function saveRules() {
 
 function closeModal() {
   $('modal').hidden = true;
+}
+
+// ---------------------------------------------------------------- one-click block / undo
+
+async function postJson(url, body) {
+  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const out = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(out.detail || res.statusText);
+  return out;
+}
+
+async function applyBlock() {
+  const button = $('modal-apply');
+  button.disabled = true;
+  button.textContent = 'Waiting for Windows…';
+  $('modal-note').textContent = 'Approve the Windows admin prompt to apply the block (it may be behind this window).';
+  try {
+    const out = await postJson('/api/blocks/apply', { apps: modal.apps });
+    if (!out.ok) throw new Error(out.error || 'not applied');
+    renderBlocked(out);
+    closeModal();
+    toast(`Blocked ${plural(out.domains, 'domain')}${out.ips ? ` + ${plural(out.ips, 'IP')}` : ''}. Undo anytime under "Blocked".`, 5000);
+    if (out.warnings && out.warnings.length) setTimeout(() => toast(out.warnings[0], 7000), 5200);
+  } catch (err) {
+    $('modal-note').className = 'note modal-note-warn';
+    $('modal-note').textContent = `Not blocked: ${err.message}`;
+  } finally {
+    button.disabled = false;
+    button.textContent = '🚫 Block now';
+  }
+}
+
+async function undoBlocks(ids) {
+  toast('Approve the Windows admin prompt to undo…', 4000);
+  try {
+    const out = await postJson('/api/blocks/undo', ids ? { ids } : { all: true });
+    if (!out.ok) throw new Error(out.error || 'not undone');
+    renderBlocked(out);
+    toast(ids ? 'Unblocked.' : 'All netpulse blocks removed.');
+  } catch (err) {
+    toast(`Couldn't undo: ${err.message}`, 6000);
+  }
+}
+
+async function loadBlocked() {
+  try { renderBlocked(await fetchJson('/api/blocks')); } catch { /* no blocks panel */ }
+}
+
+function renderBlocked(summary) {
+  const entries = summary.entries || [];
+  $('blocked-box').hidden = !entries.length;
+  $('blocked-count').textContent = entries.length;
+  $('blocked-list').innerHTML = entries.map((e) => `<div class="trusted-row ${e.active ? '' : 'inactive'}" title="${e.active ? '' : 'Not in the hosts file any more (edited by hand or reverted by antivirus)'}">
+      <span class="v"><span class="kind">${esc(e.kind)}</span>${esc(e.value)} <span class="apps">· ${esc(e.apps.join(', '))}</span></span>
+      <button type="button" data-undo="${esc(e.id)}">Undo</button>
+    </div>`).join('');
 }
 
 // ---------------------------------------------------------------- map data (shared)
@@ -1070,6 +1135,12 @@ function bindUi() {
     tab.addEventListener('click', () => { modal.format = tab.dataset.format; loadRules(); });
   }
   $('modal-copy').addEventListener('click', copyRules);
+  $('modal-apply').addEventListener('click', applyBlock);
+  $('btn-undo-all').addEventListener('click', () => undoBlocks(null));
+  $('blocked-list').addEventListener('click', (e) => {
+    const el = e.target.closest('[data-undo]');
+    if (el) undoBlocks([el.dataset.undo]);
+  });
   $('modal-save').addEventListener('click', saveRules);
   $('modal-close').addEventListener('click', closeModal);
   $('modal').addEventListener('click', (e) => { if (e.target === $('modal')) closeModal(); });
@@ -1099,6 +1170,7 @@ window.addEventListener('error', (e) => {
 
 bindUi();
 renderPanel();
+loadBlocked();
 initMap().finally(connect);
 // Expire lingering arcs even when no events arrive.
 setInterval(() => scheduleRender({ map: true }), 5000);

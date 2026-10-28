@@ -52,6 +52,11 @@
         <div id="caught-list" class="caught-list"></div>
         <div id="unattributed" class="unattributed" hidden></div>
         <label class="show-all"><input type="checkbox" id="show-all"> show clean apps too</label>
+        <details id="blocked-box" class="trusted-box" hidden>
+          <summary>🚫 Blocked (<span id="blocked-count">0</span>)</summary>
+          <div id="blocked-list"></div>
+          <button id="btn-undo-all" type="button" class="undo-all">Undo all blocks</button>
+        </details>
         <details id="trusted-box" class="trusted-box" hidden>
           <summary>Trusted by you (<span id="trusted-count">0</span>)</summary>
           <div id="trusted-list"></div>
@@ -99,10 +104,11 @@
       <div id="modal-summary" class="modal-summary"></div>
       <pre id="modal-text" class="rules"></pre>
       <div class="modal-foot">
-        <span class="note">Add these to your hosts file / firewall to block. (Live one-click blocking is on the roadmap.)</span>
+        <span class="note" id="modal-note">Add these to your hosts file / firewall to block.</span>
         <div class="modal-actions">
           <button id="modal-save" type="button">Save file</button>
-          <button id="modal-copy" type="button" class="primary">Copy</button>
+          <button id="modal-copy" type="button">Copy</button>
+          <button id="modal-apply" type="button" class="primary" hidden>🚫 Block now</button>
         </div>
       </div>
     </div>

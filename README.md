@@ -3,8 +3,8 @@
 **See what your apps are really doing behind your back — and block it.**
 
 A live world map of every connection your computer makes, with the trackers named, the culprit
-apps called out in plain English, and copy-paste rules to shut them up. Runs offline. No account,
-no API key, no admin.
+apps called out in plain English, and one click to shut them up. Runs offline. No account, no API
+key, no admin needed to watch.
 
 ![netpulse demo: tracker arcs firing across the globe as apps phone home, then a culprit gets blocked](docs/demo.gif)
 
@@ -71,8 +71,21 @@ started it, when, and with which command line (obvious secrets like `--token=…
 
 ## Blocking what it finds
 
-Hit **Block** on a culprit (or **Export blocklist** for everything caught) and netpulse generates
-rules you can copy or save:
+Hit **Block** on a culprit (or **Export blocklist** for everything caught), then **🚫 Block now**.
+On Windows, netpulse applies the block for you after one admin prompt, and lists it under
+**Blocked** with an **Undo** button (or **Undo all**):
+
+- It only ever edits **its own marked section** of the hosts file
+  (`# >>> netpulse blocks` … `# <<< netpulse blocks <<<`) and its own firewall rules (group
+  `netpulse`). Your own hosts lines are left exactly as they were, and a one-time backup
+  (`hosts.netpulse.bak`) is made before the first change. Undo all puts the file back as it was.
+- The admin-level helper is passed inline (nothing on disk to tamper with), checks a SHA-256 of
+  its request before reading it, and re-validates every hosts line and IP itself.
+- After each change netpulse reads the hosts file back to confirm. Windows Defender sometimes
+  reverts hosts entries that block **Microsoft's own** domains — netpulse warns you when that
+  might happen, and a reverted entry shows as struck-through in the Blocked list.
+
+Prefer to do it yourself, or not on Windows? The same modal gives you the rules to copy or save:
 
 - **Hosts file** — `0.0.0.0 tracker.example.com` lines for every tracker hostname the app
   contacted. Paste them at the end of `C:\Windows\System32\drivers\etc\hosts` (open Notepad *as
@@ -85,8 +98,8 @@ rules you can copy or save:
 Tracker *domains* go in the hosts file, not the firewall: their IPs are shared Google/CDN servers,
 and blocking those would break unrelated sites. For the same reason, a suspicious or malware IP that
 sits on a shared cloud/CDN network (Cloudflare, Google, Amazon…) is left out of firewall rules with
-a note — its hostname is still blocked in the hosts file. netpulse never applies anything itself — you
-review the rules and apply them. (Live one-click blocking is on the roadmap.)
+a note — its hostname is still blocked in the hosts file. Both one-click blocking and the exports
+follow these rules.
 
 ## Getting named trackers from your browser
 
@@ -210,7 +223,7 @@ All bundled in [`netpulse/data/`](netpulse/data/SOURCES.md) and [`netpulse/web/v
 
 ## Roadmap
 
-- **Live one-click blocking** — apply hosts/firewall rules from the dashboard (with undo).
+- **One-click blocking on macOS & Linux** — today it's Windows-only; the exports work everywhere.
 - **Per-app bandwidth** — how much data each app is sending, not just where.
 - **QUIC / HTTP3 visibility** — Windows doesn't report remote addresses for UDP, so QUIC traffic is
   currently invisible.

@@ -17,7 +17,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from netpulse.action.block import generate, safe_hostname
+from netpulse.action.apply import BlockStore
+from netpulse.action.block import generate, plan, safe_hostname
 from netpulse.alerts import Alerter
 from netpulse.llm.client import Explainer, LLMConfig
 from netpulse.models import Connection
@@ -55,6 +56,17 @@ class TrustRequest(BaseModel):
     name: Optional[str] = Field(None, max_length=200)  # display label (e.g. "chrome.exe")
 
 
+class ApplyBlockRequest(BaseModel):
+    """Nothing selected = every culprit (like "Export blocklist")."""
+
+    apps: list[str] = Field(default_factory=list)
+
+
+class UndoBlockRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list)  # empty = undo everything
+    all: bool = False
+
+
 class AlertsRequest(BaseModel):
     level: Literal["all", "critical", "off"]
 
@@ -66,11 +78,13 @@ class ExplainRequest(BaseModel):
 class Hub:
     def __init__(self, interval: float, llm: Optional[LLMConfig] = None, min_severity: str = "low",
                  history: Optional[HistoryStore] = None, trust: Optional[TrustStore] = None,
-                 alerter: Optional[Alerter] = None):
+                 alerter: Optional[Alerter] = None, blocks: Optional[BlockStore] = None):
         self.min_severity = min_severity
         self.history = history
         self.trust = trust or TrustStore()
         self.alerter = alerter
+        self.blocks = blocks or BlockStore()
+        self.block_lock = asyncio.Lock()  # one apply/undo (and one admin prompt) at a time
         self.events: asyncio.Queue = asyncio.Queue()
         self.pipeline = Pipeline(interval=interval, out=self.events, history=history, trust=self.trust,
                                  alerter=alerter)
@@ -116,6 +130,8 @@ class Hub:
             "min_severity": self.min_severity,
             "history": self.history is not None,
             "alerts": self.alerter.level if self.alerter else "off",
+            "blocks": {"count": len(self.blocks.entries), "supported": self.blocks.applier.supported,
+                       "apps": sorted({a for e in self.blocks.entries.values() for a in e.apps})},
             "trust": {"apps": sorted(self.trust.trust.apps), "domains": sorted(self.trust.trust.domains)},
             "restored": self.pipeline.restored,
             # Bonus signal: tracker domains looked up on this machine that no caught connection explains.
@@ -230,9 +246,9 @@ class Hub:
 def create_app(
     interval: float = 2.0, llm: Optional[LLMConfig] = None, min_severity: str = "low",
     history: Optional[HistoryStore] = None, trust: Optional[TrustStore] = None,
-    alerter: Optional[Alerter] = None,
+    alerter: Optional[Alerter] = None, blocks: Optional[BlockStore] = None,
 ) -> FastAPI:
-    hub = Hub(interval, llm, min_severity, history, trust, alerter)
+    hub = Hub(interval, llm, min_severity, history, trust, alerter, blocks)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -282,6 +298,33 @@ def create_app(
             targets = ranker.block_targets(min_severity=hub.min_severity)
         result = generate(targets, req.format, extra_domains=req.domains)
         return {"text": result.text, "filename": result.filename, "domains": result.domains, "ips": result.ips}
+
+    @app.get("/api/blocks")
+    async def blocks_status() -> dict:
+        return await asyncio.to_thread(hub.blocks.summary)
+
+    @app.post("/api/blocks/apply")
+    async def blocks_apply(req: ApplyBlockRequest) -> dict:
+        """One-click block: hosts entries for the app(s)' tracker/suspicious domains and firewall rules
+        for their non-shared suspicious IPs. May wait for the Windows admin prompt."""
+        ranker = hub.pipeline.ranker
+        targets = ranker.block_targets(req.apps or None, min_severity=hub.min_severity)
+        domains, ips = plan(targets)
+        if not domains and not ips:
+            return {"ok": False, "error": "nothing to block for that selection", "warnings": []}
+        async with hub.block_lock:
+            res = await asyncio.to_thread(hub.blocks.add, domains, ips)
+        return {"ok": res.ok, "error": res.error, "warnings": res.warnings, "domains": len(domains), "ips": len(ips),
+                **(await asyncio.to_thread(hub.blocks.summary))}
+
+    @app.post("/api/blocks/undo")
+    async def blocks_undo(req: UndoBlockRequest) -> dict:
+        if not req.all and not req.ids:
+            raise HTTPException(400, "say which blocks to undo, or all")
+        async with hub.block_lock:
+            res = await asyncio.to_thread(hub.blocks.remove, None if req.all else req.ids)
+        return {"ok": res.ok, "error": res.error, "warnings": res.warnings,
+                **(await asyncio.to_thread(hub.blocks.summary))}
 
     @app.post("/api/alerts")
     async def set_alerts(req: AlertsRequest) -> dict:

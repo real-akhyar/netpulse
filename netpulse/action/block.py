@@ -151,6 +151,20 @@ def _windows_fw(targets: list[BlockTarget]) -> BlockResult:
     return BlockResult("\n".join(lines) + "\n", FILENAMES["windows_fw"], 0, total)
 
 
+def plan(targets: list[BlockTarget]) -> tuple[dict[str, str], dict[str, str]]:
+    """What a one-click block would apply: {domain: app name} for the hosts file and
+    {ip: app name} for the firewall — same rules as the exports (validated values only, shared
+    CDN/cloud IPs left to the hosts file)."""
+    domains: dict[str, str] = {}
+    ips: dict[str, str] = {}
+    for t in targets:
+        for d in _clean(list(t.tracker_domains) + list(t.suspicious.values()), safe_hostname):
+            domains.setdefault(d, t.name)
+        for ip in _blockable_ips(t)[0]:
+            ips.setdefault(ip, t.name)
+    return domains, ips
+
+
 def _blockable_ips(t: BlockTarget) -> tuple[list[str], list[tuple[str, str]]]:
     """Split a target's IPs into ones safe to firewall and ones on shared CDN/cloud networks,
     where one IP fronts thousands of unrelated sites (those are left to the hosts file)."""
