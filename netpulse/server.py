@@ -23,7 +23,7 @@ from netpulse.alerts import Alerter
 from netpulse.llm.client import Explainer, LLMConfig
 from netpulse.models import Connection
 from netpulse.pipeline import Pipeline
-from netpulse.report import collect, render
+from netpulse.report import collect, render, report_since, set_report_since
 from netpulse.store import HistoryStore
 from netpulse.trust import TrustStore
 
@@ -66,6 +66,10 @@ class ApplyBlockRequest(BaseModel):
 class UndoBlockRequest(BaseModel):
     ids: list[str] = Field(default_factory=list)  # empty = undo everything
     all: bool = False
+
+
+class ResetRequest(BaseModel):
+    target: Literal["caught", "timeline", "report", "map", "trust"]
 
 
 class AlertsRequest(BaseModel):
@@ -300,10 +304,26 @@ def create_app(
         result = generate(targets, req.format, extra_domains=req.domains)
         return {"text": result.text, "filename": result.filename, "domains": result.domains, "ips": result.ips}
 
+    @app.post("/api/reset")
+    async def reset(req: ResetRequest) -> dict:
+        """Per-area reset: caught | timeline | report (new report period) | map | trust."""
+        if req.target in ("timeline",) and hub.history is None:
+            raise HTTPException(409, "history is off (--no-history), so there's no timeline to clear")
+        if req.target == "report":
+            set_report_since(time.time())
+        elif req.target == "map":
+            hub.recent_closed.clear()
+        else:
+            await asyncio.to_thread(hub.pipeline.reset, req.target)
+        if req.target == "caught":
+            hub._sent_processes.clear()  # clients drop their list; fresh process updates follow
+        await hub._send_all([{"type": "reset", "target": req.target}])
+        return {"ok": True, "target": req.target}
+
     @app.get("/report", include_in_schema=False)
     async def privacy_report(download: bool = False) -> HTMLResponse:
         """Shareable privacy report card: self-contained HTML, app names only, paths redacted."""
-        page = render(collect(hub.pipeline, hub.min_severity))
+        page = render(collect(hub.pipeline, hub.min_severity, since=report_since()))
         headers = {}
         if download:
             headers["Content-Disposition"] = f'attachment; filename="netpulse-report-{time.strftime("%Y-%m-%d")}.html"'

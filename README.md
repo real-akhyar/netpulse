@@ -71,10 +71,14 @@ started it, when, and with which command line (obvious secrets like `--token=…
 
 ## Blocking what it finds
 
-Hit **Block** on a culprit (or **Export blocklist** for everything caught), then **🚫 Block now**.
+Hit **Block** on a culprit (or **Export blocklist** for everything caught), then **Block now**.
 On Windows, netpulse applies the block for you after one admin prompt, and lists it under
 **Blocked** with an **Undo** button (or **Undo all**):
 
+- **Block now is conservative.** It always blocks tracker domains and known-malware endpoints, but
+  a beaconing or bare-IP endpoint only when the app itself is rated critical — plenty of legit apps
+  reconnect on a timer (update checks, sync), and blocking their server would break them. The
+  exports below still list every suspicious endpoint for you to review.
 - It only ever edits **its own marked section** of the hosts file
   (`# >>> netpulse blocks` … `# <<< netpulse blocks <<<`) and its own firewall rules (group
   `netpulse`). Your own hosts lines are left exactly as they were, and a one-time backup
@@ -127,6 +131,17 @@ netpulse history            # last 7 days; --days 30, --all for info-level event
 
 The history stays on your machine (`%LOCALAPPDATA%\netpulse\history.db` on Windows), keeps 30 days,
 and is wiped with `netpulse history --clear`. Run `netpulse watch --no-history` to keep nothing.
+
+Each part of the dashboard can also be cleared on its own:
+
+| Button | Where | What it clears |
+|---|---|---|
+| **Clear map** | above the map | lines for connections that have already closed |
+| **Clear list** | Caught tab | the culprits caught so far (apps still talking reappear) |
+| **Clear timeline** | Timeline tab | the saved timeline events |
+| **Clear trust list** | Trusted drawer | every trust rule |
+| **New period** | top bar | starts a fresh report card period (older activity stays in history) |
+| **Undo all blocks** | Blocked drawer | every hosts entry and firewall rule netpulse added |
 
 ## Privacy report card
 

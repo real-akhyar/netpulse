@@ -91,6 +91,8 @@ class BlockTarget:
     tracker_domains: set[str]  # exact hostnames contacted + their blocklist rules
     suspicious: dict[str, Optional[str]]  # beaconing / bare IP -> its hostname, if any
     orgs: dict[str, Optional[str]] = field(default_factory=dict)  # suspicious IP -> network owner
+    kinds: dict[str, str] = field(default_factory=dict)  # suspicious IP -> why (beaconing, raw_ip, known_malware...)
+    critical: bool = False  # the app itself is flagged critical (malware contact, fake system file...)
 
 
 class Ranker:
@@ -307,6 +309,8 @@ class Ranker:
                 tracker_domains=set(f.tracker_hosts),
                 suspicious={ip: f.suspicious_hosts.get(ip) for ip in f.suspicious},
                 orgs={ip: f.suspicious_orgs.get(ip) for ip in f.suspicious},
+                kinds=dict(f.suspicious),
+                critical=proc.severity == "critical",
             ))
         return targets
 

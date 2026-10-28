@@ -2,7 +2,9 @@
 /* netpulse dashboard — vanilla JS, no build step. Globe via bundled globe.gl (three.js inside);
    automatic 2D canvas fallback when WebGL is unavailable (or with ?map=2d). */
 
-const COLORS = { malware: '#ff2bd6', tracker: '#ff3b5c', suspicious: '#ffb020', normal: '#2de2e6', local: '#5b6478' };
+// One red for danger (malware is told apart by weight, not hue), muted amber, warm greys.
+const COLORS = { malware: '#e5484d', tracker: '#e5484d', suspicious: '#c9a227', normal: '#7d8590', local: '#4a4a4a' };
+const ORIGIN_COLOR = '#e6e3dc';
 const RANK = { malware: 4, tracker: 3, suspicious: 2, normal: 1, local: 0 };
 // Arcs to the same country fan out slightly by category instead of overlapping.
 const OFFSET = { malware: [0, 2.6], tracker: [1.6, 1.6], suspicious: [-1.6, -1.6], normal: [0, 0], local: [0, 0] };
@@ -113,6 +115,56 @@ function handle(ev) {
     case 'stats':
       updateStats(ev.stats);
       break;
+    case 'reset':
+      onReset(ev.target);
+      break;
+  }
+}
+
+// ---------------------------------------------------------------- per-area reset
+
+const RESET_CONFIRM = {
+  caught: 'Clear the Caught list?\n\nnetpulse forgets which apps it caught, including from saved history. '
+    + 'Apps that are still connecting will reappear. Your timeline, trust list and blocks are kept.',
+  timeline: 'Clear the timeline?\n\nAll saved findings are deleted. Caught, your trust list and blocks are kept.',
+  trust: 'Clear the trust list?\n\nEvery app and domain you trusted will be called out again.',
+};
+const RESET_DONE = {
+  caught: 'Caught list cleared.',
+  timeline: 'Timeline cleared.',
+  report: 'New report period started. The report now counts activity from this moment.',
+  map: 'Map cleared.',
+  trust: 'Trust list cleared.',
+};
+
+async function resetArea(target) {
+  if (RESET_CONFIRM[target] && !confirm(RESET_CONFIRM[target])) return;
+  try {
+    await postJson('/api/reset', { target });
+    onReset(target);
+    toast(RESET_DONE[target]);
+  } catch (err) {
+    toast(`Couldn't clear: ${err.message}`, 6000);
+  }
+}
+
+function onReset(target) {
+  if (target === 'caught') {
+    state.procs.clear();
+    state.fresh.clear();
+    lastPanelHtml = '';
+    if (state.selected) closeDetail();
+    scheduleRender({ panel: true });
+  } else if (target === 'map') {
+    for (const [id, c] of state.history) if (c.closedAt) state.history.delete(id);
+    scheduleRender({ map: true });
+  } else if (target === 'timeline') {
+    lastTimelineHtml = '';
+    $('away-badge').hidden = true;
+    if (state.view === 'timeline') loadTimeline();
+  } else if (target === 'trust') {
+    lastPanelHtml = '';
+    scheduleRender({ panel: true });
   }
 }
 
@@ -178,7 +230,7 @@ function updateStats(s) {
 
 function setPill(id, value, bump) {
   const el = $(id);
-  el.querySelector('b').textContent = value;
+  el.querySelector('dd').textContent = value;
   if (bump) {
     el.classList.remove('bump');
     void el.offsetWidth; // restart the animation
@@ -234,15 +286,15 @@ function culpritRow(p) {
   const alert = worstAlert(p);
   const hot = p.malware_count || p.tracker_count || (alert && SEVERITY[alert.severity] >= SEVERITY.critical);
   const blockedApps = (state.stats && state.stats.blocks && state.stats.blocks.apps) || [];
-  const blockedChip = blockedApps.includes(p.name) ? '<span class="chip blocked">🚫 blocked</span>' : '';
+  const blockedChip = blockedApps.includes(p.name) ? '<span class="chip blocked">blocked</span>' : '';
   const malwareChip = p.malware_count
-    ? `<span class="chip malware">☠ known malware${p.malware_count > 1 ? ` ×${p.malware_count}` : ''}</span>` : '';
+    ? `<span class="chip malware">MALWARE${p.malware_count > 1 ? ` ×${p.malware_count}` : ''}</span>` : '';
   const kind = hot ? '' : isCulprit(p) ? 'mild' : 'clean';
   const alertChip = alert && SEVERITY[alert.severity] >= SEVERITY.high
-    ? `<span class="chip ${alert.severity === 'critical' ? 'tracker' : 'suspicious'}">⚠ ${esc(alert.title)}</span>` : '';
+    ? `<span class="chip ${alert.severity === 'critical' ? 'tracker' : 'suspicious'}">${esc(alert.title)}</span>` : '';
   const fresh = state.fresh.has(p.app) ? 'fresh' : '';
   const sigChip = p.info && (p.info.signature === 'unsigned' || p.info.signature === 'invalid')
-    ? `<span class="chip suspicious">${p.info.signature === 'unsigned' ? '⚠ unsigned' : '✖ bad signature'}</span>` : '';
+    ? `<span class="chip suspicious">${p.info.signature === 'unsigned' ? 'unsigned' : 'bad signature'}</span>` : '';
   const chips = p.top_trackers.length || sigChip || alertChip || malwareChip || blockedChip
     ? `<div class="chips">${blockedChip}${malwareChip}${alertChip}${sigChip}${p.top_trackers.slice(0, 4).map((d) => `<span class="chip tracker">${esc(d)}</span>`).join('')}</div>`
     : '';
@@ -251,7 +303,7 @@ function culpritRow(p) {
       ${p.trusted ? '' : `<button type="button" class="trust" data-trust-app="${esc(p.app)}" title="Mark as expected: hide it from Caught">Trust</button>`}
     </div>` : '';
   return `<div class="culprit ${kind} ${fresh}" data-app="${esc(p.app)}">
-    <div class="glyph">${esc((p.name || '?')[0].toUpperCase())}</div>
+    <div class="sev-bar"></div>
     <div class="c-body">
       ${p.last_seen && Date.now() / 1000 - p.last_seen > 120 ? `<div class="c-ago">last active ${ago(p.last_seen)}</div>` : ''}
       <div class="c-top"><span class="c-name" title="${esc(p.exe || p.name)}">${esc(p.name)}</span>
@@ -268,7 +320,7 @@ function renderMalwareAlert(hits) {
   const el = $('malware-alert');
   el.hidden = !hits.length;
   if (!hits.length) return;
-  el.innerHTML = `<b>☠ Known malware domain looked up on this computer</b>
+  el.innerHTML = `<b>Known malware domain looked up on this computer</b>
     <div>${hits.map((h) => `<div class="mono">${esc(h)}</div>`).join('')}</div>
     <div class="k">No open connection explains it yet — whatever looked it up may connect later, or already did too
       quickly to see. A full antivirus scan is worth running.</div>`;
@@ -310,7 +362,7 @@ function renderDetail() {
     <h3>${esc(p.name)}</h3>
     <div class="exe">${esc(p.exe || 'path unavailable')}${p.pid ? ` · pid ${p.pid}` : ''}</div>
     <div class="verdict">${esc(p.verdict_text)}</div>
-    ${p.malware.length ? `<div class="section malware-title">☠ Known malware</div>
+    ${p.malware.length ? `<div class="section malware-title">Known malware</div>
       ${p.malware.map((m) => `<div class="flag critical malware">${esc(m)}</div>`).join('')}` : ''}
     ${aboutApp(p)}
     <div class="chips">
@@ -360,10 +412,10 @@ function ago(seconds) {
 }
 
 const SIGNATURE = {
-  valid: (i) => `<span class="sig ok">✓ ${esc(i.signer || 'Signed')}</span> <span class="k">verified publisher</span>`,
-  unsigned: () => '<span class="sig warn">⚠ Unsigned</span> <span class="k">no verified publisher</span>',
-  invalid: (i) => `<span class="sig bad">✖ Signature invalid or untrusted</span>${i.signer ? ` <span class="k">claims ${esc(i.signer)}</span>` : ''}`,
-  unknown: () => '<span class="sig">? Publisher unknown</span>',
+  valid: (i) => `<span class="sig ok">${esc(i.signer || 'Signed')}</span> <span class="k">verified</span>`,
+  unsigned: () => '<span class="sig warn">Unsigned</span> <span class="k">no verified publisher</span>',
+  invalid: (i) => `<span class="sig bad">Signature invalid or untrusted</span>${i.signer ? ` <span class="k">claims ${esc(i.signer)}</span>` : ''}`,
+  unknown: () => '<span class="k">Publisher unknown</span>',
   checking: () => '<span class="k">checking signature…</span>',
 };
 
@@ -388,7 +440,8 @@ function openDetail(app) {
   $('caught-view').hidden = true;
   $('timeline-view').hidden = true;
   $('detail-view').hidden = false;
-  $('btn-back').textContent = state.view === 'timeline' ? '← Timeline' : '← Caught';
+  $('btn-back').textContent = state.view === 'timeline' ? 'Back to Timeline' : 'Back to Caught';
+  $('btn-clear-panel').hidden = true;
   $('panel').scrollTop = 0;
   renderDetail();
   loadAppHistory(app);
@@ -421,6 +474,10 @@ function setView(view) {
   $('tab-caught').classList.toggle('active', view === 'caught');
   $('tab-timeline').classList.toggle('active', view === 'timeline');
   if (state.selected) return; // stay in the detail view; the tab applies when going back
+  const clear = $('btn-clear-panel');
+  clear.hidden = false;
+  clear.textContent = view === 'timeline' ? 'Clear timeline' : 'Clear list';
+  clear.title = view === 'timeline' ? 'Delete saved findings' : 'Forget the apps caught so far';
   $('caught-view').hidden = view !== 'caught';
   $('timeline-view').hidden = view !== 'timeline';
   if (view === 'timeline') {
@@ -522,7 +579,7 @@ function historySection(app, liveKeys) {
 // ---------------------------------------------------------------- desktop alerts
 
 const ALERT_LEVELS = ['all', 'critical', 'off'];
-const ALERT_LABELS = { all: '🔔 all', critical: '🔔 critical', off: '🔕 off' };
+const ALERT_LABELS = { all: 'Alerts: all', critical: 'Alerts: critical', off: 'Alerts: off' };
 
 function renderAlertsButton(level) {
   const b = $('btn-alerts');
@@ -735,11 +792,13 @@ async function applyBlock() {
     $('modal-note').textContent = `Not blocked: ${err.message}`;
   } finally {
     button.disabled = false;
-    button.textContent = '🚫 Block now';
+    button.textContent = 'Block now';
   }
 }
 
 async function undoBlocks(ids) {
+  // Running as admin there is no Windows prompt in between, so "all" gets its own confirmation.
+  if (!ids && !confirm('Remove every block netpulse added (hosts file and firewall rules)?')) return;
   toast('Approve the Windows admin prompt to undo…', 4000);
   try {
     const out = await postJson('/api/blocks/undo', ids ? { ids } : { all: true });
@@ -816,7 +875,7 @@ function endpoints(groups) {
 }
 
 function endpointTip(e) {
-  return e.groups.sort((a, b) => RANK[b.category] - RANK[a.category]).map(groupTip).join('<hr style="border:0;border-top:1px solid rgba(120,160,255,.15)">');
+  return e.groups.sort((a, b) => RANK[b.category] - RANK[a.category]).map(groupTip).join('<hr>');
 }
 
 function updateMap() {
@@ -832,16 +891,15 @@ function createGlobeMap(container, world) {
   let rings = [];
   let activeKey = '';
   let active = new Set();
-  // Countries we're talking to glow brighter. (Plain polygons, not hexPolygons: globe.gl's h3-based
-  // hex layer throws on some Natural Earth shapes and then skips the rest of the map.)
-  const capColor = (f) => (active.has(f.properties.iso) ? 'rgba(45,226,230,0.22)' : 'rgba(80,110,220,0.07)');
-  const strokeColor = (f) => (active.has(f.properties.iso) ? 'rgba(45,226,230,0.9)' : 'rgba(110,140,255,0.35)');
+  // Countries we're talking to get a slightly brighter outline. (Plain polygons, not hexPolygons:
+  // globe.gl's h3-based hex layer throws on some Natural Earth shapes and skips the rest of the map.)
+  const capColor = (f) => (active.has(f.properties.iso) ? 'rgba(230,227,220,0.06)' : 'rgba(0,0,0,0)');
+  const strokeColor = (f) => (active.has(f.properties.iso) ? 'rgba(230,227,220,0.55)' : 'rgba(230,227,220,0.16)');
 
   const globe = Globe({ animateIn: true })(container)
     .backgroundColor('rgba(0,0,0,0)')
-    .showAtmosphere(true)
-    .atmosphereColor('#2de2e6')
-    .atmosphereAltitude(0.16)
+    .showAtmosphere(false)
+    .showGraticules(true)
     .polygonsData(world.features)
     .polygonAltitude(0.006)
     .polygonCapColor((f) => capColor(f))
@@ -850,12 +908,13 @@ function createGlobeMap(container, world) {
     .polygonsTransitionDuration(0)
     .polygonLabel((f) => `<div class="globe-tip">${esc(f.properties.name)}</div>`)
     .arcStartLat('startLat').arcStartLng('startLng').arcEndLat('endLat').arcEndLng('endLng')
-    .arcColor((d) => [hexA(COLORS[d.category], 0.2), hexA(COLORS[d.category], 1)])
-    .arcStroke((d) => Math.min(1.8, (d.category === 'tracker' ? 0.6 : 0.35) + Math.log2(1 + d.count) * 0.22))
-    .arcDashLength(0.45)
-    .arcDashGap(0.25)
+    .arcColor((d) => [hexA(COLORS[d.category], d.category === 'normal' ? 0.15 : 0.35), hexA(COLORS[d.category], d.category === 'normal' ? 0.6 : 0.95)])
+    // Malware: heavier and solid; everything else a thin moving dash.
+    .arcStroke((d) => (d.category === 'malware' ? 1.4 : Math.min(0.9, (d.category === 'normal' ? 0.2 : 0.35) + Math.log2(1 + d.count) * 0.12)))
+    .arcDashLength((d) => (d.category === 'malware' ? 1 : 0.35))
+    .arcDashGap((d) => (d.category === 'malware' ? 0 : 0.4))
     .arcDashInitialGap(() => Math.random())
-    .arcDashAnimateTime((d) => ({ malware: 700, tracker: 1100, suspicious: 1700 }[d.category] || 3200))
+    .arcDashAnimateTime((d) => ({ malware: 0, tracker: 1800, suspicious: 2600 }[d.category] ?? 4500))
     .arcAltitudeAutoScale(0.3)
     .arcLabel((d) => `<div class="globe-tip">${groupTip(d.group)}</div>`)
     .pointLat('lat').pointLng('lng').pointColor('color').pointAltitude(0.012).pointRadius('radius')
@@ -867,20 +926,20 @@ function createGlobeMap(container, world) {
     .ringRepeatPeriod('period');
 
   const material = globe.globeMaterial();
-  material.color.set('#081028');
-  if (material.emissive) material.emissive.set('#050a1c');
-  material.shininess = 6;
+  material.color.set('#1a1a1a');
+  if (material.emissive) material.emissive.set('#111111');
+  material.shininess = 0;
 
   const controls = globe.controls();
   controls.autoRotate = true;
-  controls.autoRotateSpeed = 0.35;
+  controls.autoRotateSpeed = 0.2;
 
   const fit = () => globe.width(container.clientWidth).height(container.clientHeight);
   new ResizeObserver(fit).observe(container);
   fit();
 
   function originRing() {
-    return { lat: state.origin.lat, lng: state.origin.lon, color: '#b46bff', maxR: 3, period: 1600, origin: true };
+    return { lat: state.origin.lat, lng: state.origin.lon, color: ORIGIN_COLOR, maxR: 2, period: 2400, origin: true };
   }
 
   function setRings() {
@@ -895,7 +954,7 @@ function createGlobeMap(container, world) {
     },
     ping(c) {
       const off = OFFSET[c.category];
-      const ring = { lat: c.lat + off[0], lng: c.lon + off[1], color: COLORS[c.category], maxR: 7, period: 650 };
+      const ring = { lat: c.lat + off[0], lng: c.lon + off[1], color: COLORS[c.category], maxR: 4, period: 900 };
       rings.push(ring);
       setRings();
       setTimeout(() => { rings = rings.filter((r) => r !== ring); setRings(); }, 3200);
@@ -915,9 +974,9 @@ function createGlobeMap(container, world) {
       if (changed) {
         globe.arcsData([...arcs.values()]);
         const points = endpoints(groups).map((e) => ({
-          lat: e.lat, lng: e.lon, color: COLORS[e.category], radius: 0.35 + Math.min(0.9, Math.log2(1 + e.count) * 0.18), tip: endpointTip(e),
+          lat: e.lat, lng: e.lon, color: COLORS[e.category], radius: 0.25 + Math.min(0.6, Math.log2(1 + e.count) * 0.12), tip: endpointTip(e),
         }));
-        points.push({ lat: o.lat, lng: o.lon, color: '#b46bff', radius: 0.6, tip: `<b>${esc(o.label)}</b>` });
+        points.push({ lat: o.lat, lng: o.lon, color: ORIGIN_COLOR, radius: 0.45, tip: `<b>${esc(o.label)}</b>` });
         globe.pointsData(points);
       }
       const nextActive = new Set([...groups.values()].map((g) => g.country));
@@ -958,8 +1017,19 @@ function createFlatMap(canvas, world) {
     const l = land.getContext('2d');
     l.setTransform(dpr, 0, 0, dpr, 0, 0);
     l.clearRect(0, 0, W, H);
-    l.fillStyle = 'rgba(110,140,255,0.09)';
-    l.strokeStyle = 'rgba(110,140,255,0.38)';
+    // Faint 30° graticule, then outlines.
+    l.strokeStyle = 'rgba(230,227,220,0.05)';
+    l.lineWidth = 1;
+    for (let lon = -180; lon <= 180; lon += 30) {
+      const [x1, y1] = proj(LAT_TOP, lon), [x2, y2] = proj(LAT_TOP - LAT_SPAN, lon);
+      l.beginPath(); l.moveTo(x1, y1); l.lineTo(x2, y2); l.stroke();
+    }
+    for (let lat = -30; lat <= 60; lat += 30) {
+      const [x1, y1] = proj(lat, -180), [x2, y2] = proj(lat, 180);
+      l.beginPath(); l.moveTo(x1, y1); l.lineTo(x2, y2); l.stroke();
+    }
+    l.fillStyle = 'rgba(230,227,220,0.025)';
+    l.strokeStyle = 'rgba(230,227,220,0.2)';
     l.lineWidth = 0.6;
     for (const f of world.features) {
       const polys = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
@@ -986,41 +1056,36 @@ function createFlatMap(canvas, world) {
       const [ex, ey] = proj(g.lat + off[0], g.lon + off[1]);
       const cx = (sx + ex) / 2, cy = (sy + ey) / 2 - Math.hypot(ex - sx, ey - sy) * 0.3;
       const color = COLORS[g.category];
-      ctx.lineWidth = Math.min(3, 1 + Math.log2(1 + g.count) * 0.5);
+      const malware = g.category === 'malware';
+      ctx.lineWidth = malware ? 2.5 : Math.min(1.6, 0.8 + Math.log2(1 + g.count) * 0.25);
       ctx.setLineDash([]);
-      ctx.strokeStyle = hexA(color, 0.18);
+      ctx.strokeStyle = hexA(color, malware ? 0.95 : 0.14);
       ctx.beginPath(); ctx.moveTo(sx, sy); ctx.quadraticCurveTo(cx, cy, ex, ey); ctx.stroke();
-      ctx.setLineDash([10, 12]);
-      ctx.lineDashOffset = -t / (g.category === 'tracker' ? 14 : 40);
-      ctx.strokeStyle = hexA(color, 0.95);
-      ctx.shadowColor = color;
-      ctx.shadowBlur = 8;
-      ctx.beginPath(); ctx.moveTo(sx, sy); ctx.quadraticCurveTo(cx, cy, ex, ey); ctx.stroke();
-      ctx.shadowBlur = 0;
+      if (!malware) {  // malware stays a solid line; the rest get a slow moving dash
+        ctx.setLineDash([6, 10]);
+        ctx.lineDashOffset = -t / (g.category === 'tracker' ? 30 : 70);
+        ctx.strokeStyle = hexA(color, g.category === 'normal' ? 0.55 : 0.9);
+        ctx.beginPath(); ctx.moveTo(sx, sy); ctx.quadraticCurveTo(cx, cy, ex, ey); ctx.stroke();
+      }
     }
     ctx.setLineDash([]);
     for (const d of dots) {
       ctx.fillStyle = COLORS[d.category];
-      ctx.shadowColor = COLORS[d.category];
-      ctx.shadowBlur = 10;
-      ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(d.x, d.y, Math.max(2, d.r * 0.7), 0, Math.PI * 2); ctx.fill();
     }
-    ctx.shadowBlur = 0;
     const now = performance.now();
     pings = pings.filter((p) => now - p.t0 < 2400);
     for (const p of pings) {
       const k = (now - p.t0) / 2400;
       const [px, py] = proj(p.lat, p.lon);
       ctx.strokeStyle = hexA(p.color, 1 - k);
-      ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(px, py, 4 + k * 26, 0, Math.PI * 2); ctx.stroke();
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(px, py, 3 + k * 16, 0, Math.PI * 2); ctx.stroke();
     }
-    const pulse = 5 + Math.sin(t / 300) * 1.5;
-    ctx.fillStyle = '#b46bff';
-    ctx.shadowColor = '#b46bff';
-    ctx.shadowBlur = 16;
-    ctx.beginPath(); ctx.arc(sx, sy, pulse, 0, Math.PI * 2); ctx.fill();
-    ctx.shadowBlur = 0;
+    ctx.fillStyle = ORIGIN_COLOR;
+    ctx.beginPath(); ctx.arc(sx, sy, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = hexA(ORIGIN_COLOR, 0.35);
+    ctx.beginPath(); ctx.arc(sx, sy, 8, 0, Math.PI * 2); ctx.stroke();
     requestAnimationFrame(frame);
   }
 
@@ -1111,6 +1176,10 @@ function bindUi() {
   $('btn-detail-block').addEventListener('click', () => openBlock(state.selected));
   $('btn-explain').addEventListener('click', explainTrackers);
   $('btn-alerts').addEventListener('click', cycleAlerts);
+  $('btn-clear-map').addEventListener('click', () => resetArea('map'));
+  $('btn-clear-panel').addEventListener('click', () => resetArea(state.view === 'timeline' ? 'timeline' : 'caught'));
+  $('btn-clear-trust').addEventListener('click', () => resetArea('trust'));
+  $('btn-report-reset').addEventListener('click', () => resetArea('report'));
   $('btn-detail-trust').addEventListener('click', () => trustApp(state.selected));
   $('detail').addEventListener('click', (e) => {
     const el = e.target.closest('[data-trust-domain]');

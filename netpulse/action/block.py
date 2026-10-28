@@ -151,17 +151,27 @@ def _windows_fw(targets: list[BlockTarget]) -> BlockResult:
     return BlockResult("\n".join(lines) + "\n", FILENAMES["windows_fw"], 0, total)
 
 
+def _applies(t: BlockTarget, ip: str) -> bool:
+    """One-click blocking is conservative: trackers and known malware always, but a beacon or
+    bare-IP endpoint only when the app itself is flagged critical. Legit apps reconnect on a timer
+    too (update checks, sync), and blocking their server breaks them — the exports still list
+    every suspicious endpoint for the user to review."""
+    return t.kinds.get(ip) == "known_malware" or t.critical
+
+
 def plan(targets: list[BlockTarget]) -> tuple[dict[str, str], dict[str, str]]:
     """What a one-click block would apply: {domain: app name} for the hosts file and
-    {ip: app name} for the firewall — same rules as the exports (validated values only, shared
-    CDN/cloud IPs left to the hosts file)."""
+    {ip: app name} for the firewall (validated values only, shared CDN/cloud IPs left to the
+    hosts file)."""
     domains: dict[str, str] = {}
     ips: dict[str, str] = {}
     for t in targets:
-        for d in _clean(list(t.tracker_domains) + list(t.suspicious.values()), safe_hostname):
+        hosts = list(t.tracker_domains) + [h for ip, h in t.suspicious.items() if h and _applies(t, ip)]
+        for d in _clean(hosts, safe_hostname):
             domains.setdefault(d, t.name)
         for ip in _blockable_ips(t)[0]:
-            ips.setdefault(ip, t.name)
+            if _applies(t, ip):
+                ips.setdefault(ip, t.name)
     return domains, ips
 
 

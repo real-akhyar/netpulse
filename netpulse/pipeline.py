@@ -264,6 +264,21 @@ class Pipeline:
             Flag(id="trusted", severity="info", title="Trusted by you", detail=f"{what} on your trust list.")]
         conn.category = "normal"
 
+    def reset(self, target: str) -> None:
+        """Per-area reset from the dashboard. "caught" forgets culprit history (memory + disk) and
+        re-checks what's open right now; "timeline" empties saved findings; "trust" empties the
+        trust list. ("map" and "report" are handled by the server / report module.)"""
+        if target == "caught":
+            self.ranker.apps.clear()
+            if self.history is not None:
+                self.history.clear_activity()
+            self.reapply_trust()  # re-observes every open public connection, so live activity reappears
+        elif target == "timeline" and self.history is not None:
+            self.history.clear_findings()
+        elif target == "trust" and self.trust_store is not None:
+            self.trust_store.clear()
+            self.reapply_trust()
+
     def reapply_trust(self) -> None:
         """After the trust list changes: re-check every open public connection. The ranker needs
         nothing — it folds trust in whenever it's asked."""

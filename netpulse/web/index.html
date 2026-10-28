@@ -8,77 +8,84 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="beacon"></span><span>net<b>pulse</b></span></div>
-    <div class="pills">
-      <div class="pill" id="pill-apps"><b>0</b><span>apps watched</span></div>
-      <div class="pill pill-tracker" id="pill-trackers"><b>0</b><span>trackers caught</span></div>
-      <div class="pill" id="pill-countries"><b>0</b><span>countries</span></div>
-      <div class="pill pill-suspicious" id="pill-suspicious"><b>0</b><span>suspicious</span></div>
-      <div class="pill pill-malware" id="pill-malware" hidden><b>0</b><span>malware</span></div>
+    <div class="brand">
+      <span class="wordmark">netpulse</span>
+      <span id="conn-state" class="conn-state">connecting</span>
     </div>
-    <div class="actions">
-      <a id="btn-report" class="btn" href="/report" target="_blank" rel="noopener" title="Shareable privacy report card">📄 Report</a>
-      <button id="btn-alerts" type="button" title="Desktop notifications — click to change">🔔 all</button>
-      <button id="btn-pause" type="button">Pause</button>
-      <button id="btn-export" type="button" class="primary">Export blocklist</button>
-    </div>
+    <dl class="readouts">
+      <div id="pill-apps"><dt>Apps</dt><dd>0</dd></div>
+      <div id="pill-trackers" class="r-red"><dt>Trackers</dt><dd>0</dd></div>
+      <div id="pill-countries"><dt>Countries</dt><dd>0</dd></div>
+      <div id="pill-suspicious" class="r-amber"><dt>Suspicious</dt><dd>0</dd></div>
+      <div id="pill-malware" class="r-malware" hidden><dt>Malware</dt><dd>0</dd></div>
+    </dl>
+    <nav class="actions">
+      <a id="btn-report" class="btn" href="/report" target="_blank" rel="noopener" title="Open the shareable privacy report card">Report</a>
+      <button id="btn-report-reset" type="button" class="btn" title="Start a new report period: the report counts activity from now on">New period</button>
+      <button id="btn-alerts" type="button" class="btn" title="Desktop notifications: click to change">Alerts: all</button>
+      <button id="btn-pause" type="button" class="btn">Pause</button>
+      <button id="btn-export" type="button" class="btn primary">Export blocklist</button>
+    </nav>
   </header>
+  <div class="notice">Monitors only this computer's own connections. Use it on machines you own.</div>
 
   <main>
     <section id="map" aria-label="Map of where this computer's connections go">
+      <div class="map-bar">
+        <span class="label">Connections</span>
+        <div class="legend">
+          <span><i class="key malware"></i>malware</span>
+          <span><i class="key tracker"></i>tracker</span>
+          <span><i class="key suspicious"></i>suspicious</span>
+          <span><i class="key normal"></i>normal</span>
+        </div>
+        <button id="btn-clear-map" type="button" class="link" title="Remove lines for connections that have already closed">Clear map</button>
+      </div>
       <div id="globe"></div>
       <canvas id="flatmap" hidden></canvas>
       <div id="flat-tip" class="map-tip" hidden></div>
-      <div class="legend">
-        <span><i class="dot malware"></i>malware</span>
-        <span><i class="dot tracker"></i>tracker</span>
-        <span><i class="dot suspicious"></i>suspicious</span>
-        <span><i class="dot normal"></i>normal</span>
-      </div>
-      <div id="map-empty" class="map-empty">Listening… use your laptop normally and connections will appear.</div>
-      <div id="map-paused" class="map-paused" hidden>⏸ Paused — press Resume to keep watching</div>
+      <div id="map-empty" class="map-empty">Listening. Use your laptop normally and connections will appear.</div>
+      <div id="map-paused" class="map-paused" hidden>Paused</div>
     </section>
 
     <aside id="panel">
       <div class="panel-tabs" role="tablist">
         <button type="button" class="panel-tab active" id="tab-caught" role="tab">Caught</button>
         <button type="button" class="panel-tab" id="tab-timeline" role="tab" hidden>Timeline <span id="away-badge" class="away-badge" hidden></span></button>
+        <button type="button" id="btn-clear-panel" class="link clear-panel" title="Forget the apps caught so far">Clear list</button>
       </div>
 
       <div id="caught-view">
-        <div class="panel-head">
-          <span class="sub">apps tracking you or phoning home</span>
-        </div>
+        <p class="panel-sub">Apps tracking you or phoning home, nosiest first.</p>
         <div id="malware-alert" class="malware-alert" role="alert" hidden></div>
         <div id="caught-list" class="caught-list"></div>
         <div id="unattributed" class="unattributed" hidden></div>
-        <label class="show-all"><input type="checkbox" id="show-all"> show clean apps too</label>
-        <details id="blocked-box" class="trusted-box" hidden>
-          <summary>🚫 Blocked (<span id="blocked-count">0</span>)</summary>
+        <label class="show-all"><input type="checkbox" id="show-all"> Show clean apps too</label>
+        <details id="blocked-box" class="drawer" hidden>
+          <summary>Blocked <span id="blocked-count" class="count">0</span></summary>
           <div id="blocked-list"></div>
-          <button id="btn-undo-all" type="button" class="undo-all">Undo all blocks</button>
+          <button id="btn-undo-all" type="button" class="link">Undo all blocks</button>
         </details>
-        <details id="trusted-box" class="trusted-box" hidden>
-          <summary>Trusted by you (<span id="trusted-count">0</span>)</summary>
+        <details id="trusted-box" class="drawer" hidden>
+          <summary>Trusted <span id="trusted-count" class="count">0</span></summary>
           <div id="trusted-list"></div>
+          <button id="btn-clear-trust" type="button" class="link">Clear trust list</button>
         </details>
       </div>
 
       <div id="timeline-view" hidden>
-        <div class="panel-head">
-          <span class="sub">first time each app did each thing — saved between runs</span>
-        </div>
+        <p class="panel-sub">The first time each app did each thing. Saved between runs.</p>
         <div id="timeline-list" class="timeline-list"></div>
-        <label class="show-all"><input type="checkbox" id="timeline-all"> show info events too</label>
+        <label class="show-all"><input type="checkbox" id="timeline-all"> Show info events too</label>
       </div>
 
       <div id="detail-view" hidden>
         <div class="detail-bar">
-          <button id="btn-back" type="button" class="link">← Caught</button>
+          <button id="btn-back" type="button" class="link">Back to Caught</button>
           <span class="detail-buttons">
-            <button id="btn-explain" type="button" hidden>What are these?</button>
-            <button id="btn-detail-trust" type="button" class="trust">Trust app</button>
-            <button id="btn-detail-block" type="button" class="block">Block</button>
+            <button id="btn-explain" type="button" class="btn" hidden>What are these?</button>
+            <button id="btn-detail-trust" type="button" class="btn">Trust app</button>
+            <button id="btn-detail-block" type="button" class="btn danger">Block</button>
           </span>
         </div>
         <div id="detail"></div>
@@ -87,15 +94,15 @@
   </main>
 
   <footer>
-    <span>Monitors only this computer's own connections — for machines you own.</span>
-    <span id="conn-state" class="conn-state">connecting…</span>
+    <span>Monitors only this computer's own connections. For machines you own.</span>
+    <span>Offline · no account · netpulse</span>
   </footer>
 
   <div id="modal" class="modal" hidden>
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
       <div class="modal-head">
         <h3 id="modal-title">Block</h3>
-        <button id="modal-close" type="button" class="link" aria-label="Close">✕</button>
+        <button id="modal-close" type="button" class="link" aria-label="Close">Close</button>
       </div>
       <div class="tabs" role="tablist">
         <button type="button" class="tab" data-format="hosts">Hosts file</button>
@@ -107,9 +114,9 @@
       <div class="modal-foot">
         <span class="note" id="modal-note">Add these to your hosts file / firewall to block.</span>
         <div class="modal-actions">
-          <button id="modal-save" type="button">Save file</button>
-          <button id="modal-copy" type="button">Copy</button>
-          <button id="modal-apply" type="button" class="primary" hidden>🚫 Block now</button>
+          <button id="modal-save" type="button" class="btn">Save file</button>
+          <button id="modal-copy" type="button" class="btn">Copy</button>
+          <button id="modal-apply" type="button" class="btn primary" hidden>Block now</button>
         </div>
       </div>
     </div>

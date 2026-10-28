@@ -58,6 +58,7 @@ def _connections_table(pipeline: Pipeline, max_rows: int) -> Table:
     table.add_column("Process", style="bold", no_wrap=True, max_width=24)
     table.add_column("PID", justify="right", no_wrap=True, min_width=5)
     table.add_column("Remote", no_wrap=True, max_width=44, overflow="ellipsis")
+    table.add_column("Scope", no_wrap=True)
     table.add_column("Country", no_wrap=True)
     table.add_column("Category", no_wrap=True, max_width=36, overflow="ellipsis")
     table.add_column("Status", no_wrap=True)
@@ -76,13 +77,14 @@ def _connections_table(pipeline: Pipeline, max_rows: int) -> Table:
             Text(conn.process_name, style=name_style),
             str(conn.pid) if conn.pid else "-",
             Text(_remote(conn), style={"tracker": "red", "malware": "bold magenta"}.get(conn.category, "")),
+            Text(conn.scope, style="grey62" if conn.scope != "public" else ""),
             conn.country or "-",
             Text(category, style=CATEGORY_STYLE[conn.category]),
             conn.status,
             str(conn.hit_count),
         )
     if len(conns) > max_rows:
-        table.add_row("", Text(f"… {len(conns) - max_rows} more", style="grey50"), "", "", "", "", "", "")
+        table.add_row("", Text(f"… {len(conns) - max_rows} more", style="grey50"), "", "", "", "", "", "", "")
     return table
 
 
@@ -231,11 +233,12 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "report":
         from pathlib import Path
 
-        from netpulse.report import collect, render
+        from netpulse.report import collect, render, report_since
 
-        # A pipeline restored from history (never started): the last 30 days, with your trust list applied.
+        # A pipeline restored from history (never started): the current report period (or the last
+        # 30 days), with your trust list applied.
         pipeline = Pipeline(history=HistoryStore(), trust=TrustStore())
-        data = collect(pipeline)
+        data = collect(pipeline, since=report_since())
         out = Path(args.output or f"netpulse-report-{time.strftime('%Y-%m-%d')}.html").resolve()
         out.write_text(render(data), encoding="utf-8")
         console.print(f"Grade [bold]{data.grade}[/] — {data.summary}")

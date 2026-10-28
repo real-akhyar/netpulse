@@ -171,6 +171,19 @@ class HistoryStore:
         return self._query(f"SELECT * FROM findings WHERE {' AND '.join(where)} ORDER BY first_seen DESC LIMIT ?",
                            (*args, limit))
 
+    def clear_findings(self) -> None:
+        """Empty the timeline (findings) only."""
+        self.flush()
+        with self._connect() as db:
+            db.execute("DELETE FROM findings")
+
+    def clear_activity(self) -> None:
+        """Forget saved endpoints and apps (what restores culprits after a restart); keep the timeline."""
+        self.flush()
+        with self._connect() as db:
+            db.execute("DELETE FROM endpoints")
+            db.execute("DELETE FROM apps")
+
     def clear(self) -> None:
         with self._connect() as db:
             for table in ("endpoints", "findings", "apps"):
