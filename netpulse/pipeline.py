@@ -28,6 +28,13 @@ from netpulse.trust import TrustStore
 
 log = logging.getLogger(__name__)
 
+# The dashboard shows what's happening *now*. A connection is live while it's open; one that's
+# already closing (TIME_WAIT etc.) still counts for LIVE_GRACE seconds after it first appeared —
+# quick tracker pings are often first seen by the poll when they're already closing.
+ENDED_STATES = {"TIME_WAIT", "CLOSE_WAIT", "FIN_WAIT1", "FIN_WAIT2", "LAST_ACK", "CLOSING", "CLOSE", "CLOSED"}
+LIVE_GRACE = 20.0
+LOOKUP_LIVE = 120.0  # a tracker lookup in the DNS cache counts as "now" for this long
+
 
 class Pipeline:
     def __init__(self, interval: float = 2.0, out: Optional[asyncio.Queue] = None,
@@ -270,6 +277,7 @@ class Pipeline:
         trust list. ("map" and "report" are handled by the server / report module.)"""
         if target == "caught":
             self.ranker.apps.clear()
+            self.cache_tracker_hits.clear()
             if self.history is not None:
                 self.history.clear_activity()
             self.reapply_trust()  # re-observes every open public connection, so live activity reappears
@@ -328,8 +336,8 @@ class Pipeline:
                         continue
                     newest = max(newest, ts)
                     rule = self.trackers.match(name)
-                    if rule and rule not in self.cache_tracker_hits:
-                        self.cache_tracker_hits[rule] = ts
+                    if rule:
+                        self.cache_tracker_hits[rule] = max(ts, self.cache_tracker_hits.get(rule, 0.0))
                     threat = self.threats.match_host(name)
                     if threat and threat.indicator not in self.cache_malware_hits:
                         self.cache_malware_hits[threat.indicator] = threat.describe()
@@ -348,11 +356,24 @@ class Pipeline:
         """Every tracker rule / malware indicator some recorded connection accounts for."""
         return {v for app in self.ranker.apps.values() for ep in app.endpoints.values() if (v := getattr(ep, attr))}
 
-    def unattributed_tracker_lookups(self) -> list[str]:
-        """Tracker domains something on this machine looked up, but no caught connection explains."""
+    def unattributed_tracker_lookups(self, live: bool = False) -> list[str]:
+        """Tracker domains something on this machine looked up, but no caught connection explains
+        (with live=True: only lookups from the last LOOKUP_LIVE seconds)."""
         explained = self._explained("tracker_rule")
         trust = self.ranker.trust
-        return [d for d in self.cache_tracker_hits if d not in explained and not trust.covers(d)]
+        since = time.time() - LOOKUP_LIVE if live else 0.0
+        return [d for d, ts in self.cache_tracker_hits.items()
+                if ts >= since and d not in explained and not trust.covers(d)]
+
+    def live_endpoints(self) -> dict[str, set[tuple[str, int]]]:
+        """{app: {(ip, port)}} for public connections that are live right now (see LIVE_GRACE)."""
+        now = time.time()
+        live: dict[str, set[tuple[str, int]]] = {}
+        for c in list(self.monitor.connections.values()):
+            if c.scope == "public" and c.pid is not None and (
+                    c.status not in ENDED_STATES or now - c.first_seen < LIVE_GRACE):
+                live.setdefault(c.app, set()).add((c.raddr, c.rport))
+        return live
 
     def unattributed_malware_lookups(self) -> list[str]:
         """Known-malware domains looked up on this machine that no caught connection explains —
@@ -362,10 +383,13 @@ class Pipeline:
         return [f"{d} — {desc}" for d, desc in self.cache_malware_hits.items()
                 if d not in explained and not trust.covers(d)]
 
-    def stats(self) -> dict:
-        totals = self.ranker.totals()
+    def stats(self, live: bool = False) -> dict:
+        """Counts for the whole session — or, with live=True, for what's connected right now
+        (known malware always counts until cleared)."""
+        endpoints = self.live_endpoints() if live else None
+        totals = self.ranker.totals(endpoints)
         return {
-            "apps": len(self.ranker.apps),
+            "apps": len(endpoints) if endpoints is not None else len(self.ranker.apps),
             "trackers": len(totals["trackers"]),
             "countries": len(totals["countries"]),
             "suspicious": len(totals["suspicious"]),

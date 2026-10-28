@@ -93,3 +93,6 @@ class ProcessAgg(BaseModel):
     first_seen: float = 0.0  # earliest activity, including restored history
     last_seen: float = 0.0
     trusted: bool = False  # on the user's trust list (hidden from Caught unless it touched malware)
+    # Dashboard only: True = doing something flagged right now, and the counts/verdict above cover
+    # just its live connections; False = everything it was caught doing earlier this session.
+    active: bool = True

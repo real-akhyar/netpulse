@@ -143,12 +143,14 @@ def collect(pipeline, min_severity: str = "low", since: Optional[float] = None) 
     totals = ranker.totals()
     data.trackers = len(totals["trackers"])
     data.malware = sorted({m for p in procs for m in p.malware} | set(pipeline.unattributed_malware_lookups()))
+    live = pipeline.live_endpoints()
     for p in ranker.culprits(min_severity):
         alerts = {f.severity for f in p.flags if f.id != "many_trackers"}
         data.critical_alert_apps += "critical" in alerts
         data.high_alert_apps += "high" in alerts and "critical" not in alerts
         row = {"name": p.name, "nosiness": round(p.nosiness), "severity": p.severity or "low",
-               "verdict": redact(p.verdict_text), "trackers": p.top_trackers[:4]}
+               "verdict": redact(p.verdict_text), "trackers": p.top_trackers[:4], "last_seen": p.last_seen,
+               "active": bool(live.get(p.app))}
         data.culprits.append(row)
         if p.severity == "critical":
             data.critical.append({"name": p.name, "verdict": row["verdict"]})
@@ -179,6 +181,13 @@ def _date(ts: Optional[float]) -> str:
     return time.strftime("%d %b %Y, %H:%M", time.localtime(ts)) if ts else "—"
 
 
+def _when(active: bool, ts: Optional[float]) -> str:
+    """'active now' or 'last active 28 Oct 2026, 14:05' under an app's name."""
+    if not active and not ts:
+        return ""
+    return f'<div class="when">{"active now" if active else f"last active {_date(ts)}"}</div>'
+
+
 def _bars(rows: list[tuple[str, int, str]], color: str) -> str:
     top = max((n for _, n, _ in rows), default=1) or 1
     return "".join(
@@ -207,7 +216,7 @@ def render(data: ReportData) -> str:
                   "Offline scan) and block what you don't recognise.</p></section>")
 
     culprit_rows = "".join(
-        f'<tr><td><b>{_e(c["name"])}</b><span class="score">{c["nosiness"]}</span><div class="meter"><i style="width:{max(3, c["nosiness"])}%;'
+        f'<tr><td><b>{_e(c["name"])}</b><span class="score">{c["nosiness"]}</span>{_when(c["active"], c["last_seen"])}<div class="meter"><i style="width:{max(3, c["nosiness"])}%;'
         f'background:{sev_color.get(c["severity"], "#7d8590")}"></i></div></td>'
         f'<td>{_e(c["verdict"])}<div class="chips">{"".join(f"<span>{_e(t)}</span>" for t in c["trackers"])}</div></td></tr>'
         for c in data.culprits[:10]
@@ -253,6 +262,7 @@ table {{ width:100%; border-collapse:collapse; border-top:1px solid var(--line);
 td {{ padding:10px 10px 10px 0; border-bottom:1px solid var(--line); vertical-align:top; font-size:13.5px; overflow-wrap:anywhere; }}
 td:first-child {{ width:30%; }}
 .score {{ float:right; font:12px var(--mono); color:var(--muted); }}
+.when {{ font:11px var(--mono); color:var(--muted); margin-top:2px; }}
 .meter {{ height:2px; background:var(--line); margin-top:7px; }} .meter i {{ display:block; height:100%; }}
 .chips {{ margin-top:6px; display:flex; flex-wrap:wrap; gap:4px; }}
 .chips span {{ font:11px var(--mono); color:#e5484d; border:1px solid rgba(229,72,77,.35); border-radius:2px; padding:0 5px;
@@ -281,7 +291,8 @@ footer {{ margin-top:28px; padding-top:12px; border-top:1px solid var(--line); f
   bare-IP connections. Score {data.penalty}, lower is better.</div></div></div>
 <dl class="readouts">{readout_html}</dl>
 {alarms}
-<section><h2>Nosiest apps</h2><table>{culprit_rows}</table>{trusted}</section>
+<section><h2>Nosiest apps</h2><p class="muted">Everything caught in this period, including apps that have since gone quiet.</p>
+<table>{culprit_rows}</table>{trusted}</section>
 <div class="grid2">
   <section><h2>Trackers by company</h2>{companies or '<p class="muted">No trackers seen.</p>'}</section>
   <section><h2>Where your data goes</h2>{countries or '<p class="muted">No internet connections recorded.</p>'}</section>

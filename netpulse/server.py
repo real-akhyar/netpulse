@@ -21,7 +21,7 @@ from netpulse.action.apply import BlockStore
 from netpulse.action.block import generate, plan, safe_hostname
 from netpulse.alerts import Alerter
 from netpulse.llm.client import Explainer, LLMConfig
-from netpulse.models import Connection
+from netpulse.models import Connection, ProcessAgg
 from netpulse.pipeline import Pipeline
 from netpulse.report import collect, render, report_since, set_report_since
 from netpulse.store import HistoryStore
@@ -129,7 +129,7 @@ class Hub:
 
     def stats(self) -> dict:
         return {
-            **self.pipeline.stats(),
+            **self.pipeline.stats(live=True),  # the dashboard counts what's happening now
             "paused": self.paused,
             "llm": self.explainer is not None,
             "min_severity": self.min_severity,
@@ -140,9 +140,23 @@ class Hub:
             "trust": {"apps": sorted(self.trust.trust.apps), "domains": sorted(self.trust.trust.domains)},
             "restored": self.pipeline.restored,
             # Bonus signal: tracker domains looked up on this machine that no caught connection explains.
-            "unattributed": self.pipeline.unattributed_tracker_lookups()[:12],
+            "unattributed": self.pipeline.unattributed_tracker_lookups(live=True)[:12],
             "unattributed_malware": self.pipeline.unattributed_malware_lookups()[:8],
         }
+
+    def process_views(self) -> list[ProcessAgg]:
+        """What the Caught panel shows: an app doing something flagged right now, counted over
+        its live connections only (active=True); every other app as caught so far (active=False),
+        so it can still be reviewed and blocked from the "Earlier" list."""
+        ranker = self.pipeline.ranker
+        full = {p.app: p for p in ranker.processes()}
+        views = []
+        for p in ranker.processes(self.pipeline.live_endpoints()):
+            if ranker.is_culprit(p, self.min_severity):
+                views.append(p)
+            else:
+                views.append(full[p.app].model_copy(update={"active": False}))
+        return sorted(views, key=lambda p: (-p.nosiness, p.name.lower()))
 
     def snapshot(self) -> list[dict]:
         messages: list[dict] = [{"type": "origin", "origin": self.origin}]
@@ -152,7 +166,7 @@ class Hub:
                 messages.append({"type": "connection_new", "connection": conn.model_dump(mode="json")})
                 messages.append({"type": "connection_closed", "id": conn.id, "closed_at": closed_at})
         messages += [{"type": "connection_new", "connection": c.model_dump(mode="json")} for c in self.connections()]
-        messages += [{"type": "process_update", "process": p.model_dump(mode="json")} for p in self.pipeline.ranker.processes()]
+        messages += [{"type": "process_update", "process": p.model_dump(mode="json")} for p in self.process_views()]
         messages.append({"type": "stats", "stats": self.stats()})
         return messages
 
@@ -210,7 +224,7 @@ class Hub:
 
     def _aggregate_changes(self) -> list[dict]:
         messages: list[dict] = []
-        for proc in self.pipeline.ranker.processes():
+        for proc in self.process_views():
             dumped = proc.model_dump(mode="json")
             encoded = json.dumps(dumped, sort_keys=True)
             if self._sent_processes.get(proc.app) != encoded:
@@ -275,7 +289,7 @@ def create_app(
 
     @app.get("/api/processes")
     async def processes() -> list[dict]:
-        return [p.model_dump(mode="json") for p in hub.pipeline.ranker.processes()]
+        return [p.model_dump(mode="json") for p in hub.process_views()]
 
     @app.get("/api/origin")
     async def origin() -> dict:

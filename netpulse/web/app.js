@@ -8,7 +8,10 @@ const ORIGIN_COLOR = '#e6e3dc';
 const RANK = { malware: 4, tracker: 3, suspicious: 2, normal: 1, local: 0 };
 // Arcs to the same country fan out slightly by category instead of overlapping.
 const OFFSET = { malware: [0, 2.6], tracker: [1.6, 1.6], suspicious: [-1.6, -1.6], normal: [0, 0], local: [0, 0] };
-const ARC_LINGER_MS = 60000; // keep an arc this long after its socket closes
+// Live = open, or already closing but first seen under LIVE_GRACE_MS ago (quick tracker pings are
+// often first seen when they're already closing). Same rule as the server's pipeline.LIVE_GRACE.
+const LIVE_GRACE_MS = 20000;
+const ENDED = new Set(['TIME_WAIT', 'CLOSE_WAIT', 'FIN_WAIT1', 'FIN_WAIT2', 'LAST_ACK', 'CLOSING', 'CLOSE', 'CLOSED']);
 const HISTORY_MAX = 4000;
 const RENDER_DELAY_MS = 250;
 
@@ -42,6 +45,9 @@ const isCulprit = (p) => !!p && (!p.trusted || p.malware_count > 0)
   && (p.tracker_count > 0 || p.suspicious_count > 0 || p.alert_count > 0 || p.malware_count > 0)
   && SEVERITY[p.severity || 'info'] >= SEVERITY[state.stats?.min_severity || 'low'];
 const hostOf = (c) => c.remote_host || c.raddr;
+// Doing something flagged right now (the server sends live counts for these).
+const isActive = (p) => isCulprit(p) && p.active !== false;
+const isLive = (c, now = Date.now()) => !c.closedAt && (!ENDED.has(c.status) || now - c.first_seen * 1000 < LIVE_GRACE_MS);
 const countryName = (code) => state.countryNames.get(code) || code || 'Unknown';
 
 function hexA(hex, alpha) {
@@ -198,7 +204,7 @@ function trimHistory() {
 }
 
 function updateProcess(p) {
-  if (!isCulprit(state.procs.get(p.app)) && isCulprit(p)) state.fresh.add(p.app);
+  if (!isActive(state.procs.get(p.app)) && isActive(p)) state.fresh.add(p.app);
   state.procs.set(p.app, p);
   scheduleRender({ panel: true, map: true });  // a culprit's flagged lines stay on the map
 }
@@ -259,22 +265,33 @@ function scheduleRender(parts) {
 
 function renderPanel() {
   if (state.selected) { renderDetail(); return; }
-  const list = [...state.procs.values()]
-    .filter((p) => state.showAll || isCulprit(p))
-    .sort((a, b) => b.nosiness - a.nosiness || a.name.localeCompare(b.name));
-  const html = list.length
-    ? list.map(culpritRow).join('')
-    : `<div class="empty">Nothing caught yet.<br>Use your laptop normally — browse, open apps —
+  const byNoise = (a, b) => b.nosiness - a.nosiness || a.name.localeCompare(b.name);
+  const procs = [...state.procs.values()];
+  const now = procs.filter((p) => isActive(p) || (state.showAll && !isCulprit(p))).sort(byNoise);
+  const earlier = procs.filter((p) => isCulprit(p) && !isActive(p)).sort(byNoise);
+  const html = now.length
+    ? now.map(culpritRow).join('')
+    : earlier.length
+      ? '<div class="empty">Nothing is tracking you right now.<br>Apps caught earlier are listed under "Earlier" below.</div>'
+      : `<div class="empty">Nothing caught yet.<br>Use your laptop normally — browse, open apps —
        and anything tracking you or phoning home shows up here.</div>`;
+  const earlierHtml = earlier.map(culpritRow).join('');
   // Only touch the DOM when something changed, so a click never lands on a row mid-replacement.
   if (html !== lastPanelHtml) {
     $('caught-list').innerHTML = html;
     lastPanelHtml = html;
     renderTrusted();
   }
+  if (earlierHtml !== lastEarlierHtml) {
+    $('earlier-list').innerHTML = earlierHtml;
+    $('earlier-count').textContent = earlier.length;
+    $('earlier-box').hidden = !earlier.length;
+    lastEarlierHtml = earlierHtml;
+  }
   state.fresh.clear();
 }
 let lastPanelHtml = '';
+let lastEarlierHtml = '';
 
 const PROCESS_ALERTS = new Set(['masquerading', 'silent_tool_online', 'dual_use_tool_online', 'risky_location', 'bad_signature']);
 
@@ -303,7 +320,7 @@ function culpritRow(p) {
       <button type="button" class="block" data-block="${esc(p.app)}">Block</button>
       ${p.trusted ? '' : `<button type="button" class="trust" data-trust-app="${esc(p.app)}" title="Mark as expected: hide it from Caught">Trust</button>`}
     </div>` : '';
-  return `<div class="culprit ${kind} ${fresh}" data-app="${esc(p.app)}">
+  return `<div class="culprit ${kind} ${fresh} ${isActive(p) ? '' : 'earlier'}" data-app="${esc(p.app)}">
     <div class="sev-bar"></div>
     <div class="c-body">
       ${p.last_seen && Date.now() / 1000 - p.last_seen > 120 ? `<div class="c-ago">last active ${ago(p.last_seen)}</div>` : ''}
@@ -349,7 +366,7 @@ function renderDetail() {
     const rule = c.tracker_rule || (!isIp && c.threat_indicator) || c.remote_host;
     const r = rows.get(key) || { host: hostOf(c), ip: c.raddr, port: c.rport, category: c.category, country: c.country, rule, n: 0, open: 0 };
     r.n += 1;
-    if (!c.closedAt) r.open += 1;
+    if (isLive(c)) r.open += 1;
     rows.set(key, r);
   }
   const sorted = [...rows.values()].sort((a, b) => RANK[b.category] - RANK[a.category] || b.open - a.open || b.n - a.n
@@ -839,15 +856,12 @@ function spreadOf(key) {
 
 const isBlocked = (c) => state.blockedDomains.has(hostOf(c)) || state.blockedDomains.has(c.tracker_rule);
 
-// A closed connection stays on the map for ARC_LINGER_MS — or, if it was a tracker/suspicious/
-// malware endpoint, for as long as its app is still in Caught (short beacons would otherwise
-// flash for a minute and vanish). Once blocked, or after "Clear list", it goes.
+// The map is live: a line shows while its connection is (see isLive). Known malware is the
+// exception — its line stays while the app is caught, until it's blocked or the list is cleared.
 function onMap(c, now) {
   if (c.scope !== 'public' || c.lat == null) return false;
-  if (!c.closedAt) return true;
-  if (isBlocked(c)) return false;
-  if (now - c.closedAt <= ARC_LINGER_MS) return true;
-  return c.category !== 'normal' && isCulprit(state.procs.get(c.app));
+  if (isLive(c, now)) return true;
+  return c.category === 'malware' && !isBlocked(c) && isCulprit(state.procs.get(c.app));
 }
 
 function arcGroups() {
@@ -868,7 +882,7 @@ function arcGroups() {
       groups.set(key, g);
     }
     g.count += 1;
-    if (!c.closedAt) g.open += 1;
+    if (isLive(c, now)) g.open += 1;
     g.apps.set(c.process_name, (g.apps.get(c.process_name) || 0) + 1);
     g.hosts.set(hostOf(c), (g.hosts.get(hostOf(c)) || 0) + 1);
   }
@@ -1220,18 +1234,19 @@ async function initMap() {
 }
 
 function bindUi() {
-  $('caught-list').addEventListener('click', (e) => {
+  const onCaughtClick = (e) => {
     const block = e.target.closest('[data-block]');
     if (block) { openBlock(block.dataset.block); return; }
     const trust = e.target.closest('[data-trust-app]');
     if (trust) { trustApp(trust.dataset.trustApp); return; }
     const row = e.target.closest('.culprit');
     if (row) openDetail(row.dataset.app);
-  });
+  };
+  $('caught-list').addEventListener('click', onCaughtClick);
+  $('earlier-list').addEventListener('click', onCaughtClick);
   $('btn-detail-block').addEventListener('click', () => openBlock(state.selected));
   $('btn-explain').addEventListener('click', explainTrackers);
   $('btn-alerts').addEventListener('click', cycleAlerts);
-  $('btn-clear-map').addEventListener('click', () => resetArea('map'));
   $('btn-clear-panel').addEventListener('click', () => resetArea(state.view === 'timeline' ? 'timeline' : 'caught'));
   $('btn-clear-trust').addEventListener('click', () => resetArea('trust'));
   $('btn-report-reset').addEventListener('click', () => resetArea('report'));

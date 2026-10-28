@@ -6,6 +6,10 @@ caught after its sockets close. Tracker/suspicious counts are distinct domains/I
 Each app keeps one record per endpoint (remote IP + port) with its raw findings; the culprit view
 is folded from those records on demand. That keeps trust exact: trusting a domain or an app hides
 its findings everywhere at once, and untrusting brings them straight back.
+
+Folding can also be limited to the endpoints that are live right now (`live`: app -> {(ip, port)}),
+which is what the dashboard shows; the report folds everything. Known-malware endpoints are always
+included — that alarm stays up until the user clears it.
 """
 
 from __future__ import annotations
@@ -140,13 +144,15 @@ class Ranker:
 
     # ---- folding (trust applied here) ------------------------------------
 
-    def facts(self, key: str) -> Facts:
+    def facts(self, key: str, live: Optional[set[tuple[str, int]]] = None) -> Facts:
         f = Facts()
         app = self.apps.get(key)
         if app is None:
             return f
         latest: Optional[_Endpoint] = None
         for ep in app.endpoints.values():
+            if live is not None and (ep.ip, ep.port) not in live and not ep.threat_indicator:
+                continue
             f.remotes.add(ep.ip)
             if ep.country:
                 f.countries.add(ep.country)
@@ -202,8 +208,8 @@ class Ranker:
         alerts = [f for f in flags if f.id in PROCESS_ALERTS and SEVERITY_RANK[f.severity] >= SEVERITY_RANK["high"]]
         return max(alerts, key=lambda f: SEVERITY_RANK[f.severity], default=None)
 
-    def _aggregate(self, key: str, app: _App) -> ProcessAgg:
-        f = self.facts(key)
+    def _aggregate(self, key: str, app: _App, live: Optional[set[tuple[str, int]]] = None) -> ProcessAgg:
+        f = self.facts(key, live)
         trusted = self.is_trusted(key)
         tracker_count = len(f.trackers)
         suspicious_count = len(f.suspicious)
@@ -223,7 +229,7 @@ class Ranker:
             pid=app.pid,
             name=app.name,
             exe=app.exe,
-            connection_count=len(app.connection_ids),
+            connection_count=len(app.connection_ids) if live is None else len(live),
             distinct_remotes=len(f.remotes),
             distinct_countries=len(f.countries),
             tracker_count=tracker_count,
@@ -279,20 +285,24 @@ class Ranker:
 
     # ---- views -----------------------------------------------------------
 
-    def processes(self) -> list[ProcessAgg]:
-        """All apps, noisiest first."""
-        return sorted((self._aggregate(k, a) for k, a in self.apps.items()), key=lambda p: (-p.nosiness, p.name.lower()))
+    def processes(self, live: Optional[dict[str, set[tuple[str, int]]]] = None) -> list[ProcessAgg]:
+        """All apps, noisiest first — counting only live endpoints when `live` is given."""
+        return sorted(
+            (self._aggregate(k, a, None if live is None else live.get(k, set())) for k, a in self.apps.items()),
+            key=lambda p: (-p.nosiness, p.name.lower()),
+        )
 
-    def culprits(self, min_severity: str = "low") -> list[ProcessAgg]:
-        """The "Caught" list: apps with a tracker/suspicious finding at or above min_severity.
-        Trusted apps are left out — unless they touched known malware, which trust never hides."""
-        floor = SEVERITY_RANK[min_severity]
-        return [
-            p for p in self.processes()
-            if (p.tracker_count or p.suspicious_count or p.alert_count or p.malware_count)
-            and SEVERITY_RANK[p.severity or "info"] >= floor
-            and (not p.trusted or p.malware_count)
-        ]
+    @staticmethod
+    def is_culprit(p: ProcessAgg, min_severity: str = "low") -> bool:
+        """A tracker/suspicious finding at or above min_severity. Trusted apps are left out —
+        unless they touched known malware, which trust never hides."""
+        return bool(p.tracker_count or p.suspicious_count or p.alert_count or p.malware_count) \
+            and SEVERITY_RANK[p.severity or "info"] >= SEVERITY_RANK[min_severity] \
+            and (not p.trusted or bool(p.malware_count))
+
+    def culprits(self, min_severity: str = "low", live: Optional[dict[str, set[tuple[str, int]]]] = None) -> list[ProcessAgg]:
+        """The "Caught" list."""
+        return [p for p in self.processes(live) if self.is_culprit(p, min_severity)]
 
     def block_targets(self, keys: Optional[list[str]] = None, min_severity: str = "low") -> list[BlockTarget]:
         """Blockable endpoints for the given apps (default: every culprit), noisiest first."""
@@ -314,12 +324,12 @@ class Ranker:
             ))
         return targets
 
-    def totals(self) -> dict[str, set]:
+    def totals(self, live: Optional[dict[str, set[tuple[str, int]]]] = None) -> dict[str, set]:
         """Distinct trackers / countries / suspicious IPs / malware across untrusted apps
         (malware counts even for trusted apps — trust never hides it)."""
         out = {"trackers": set(), "countries": set(), "suspicious": set(), "malware": set()}
         for key in self.apps:
-            f = self.facts(key)
+            f = self.facts(key, None if live is None else live.get(key, set()))
             out["malware"].update(f.malware)
             if self.is_trusted(key):
                 continue

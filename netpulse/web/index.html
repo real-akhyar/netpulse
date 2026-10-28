@@ -12,7 +12,7 @@
       <span class="wordmark">netpulse</span>
       <span id="conn-state" class="conn-state">connecting</span>
     </div>
-    <dl class="readouts">
+    <dl class="readouts" title="Right now. The report counts everything caught this period.">
       <div id="pill-apps"><dt>Apps</dt><dd>0</dd></div>
       <div id="pill-trackers" class="r-red"><dt>Trackers</dt><dd>0</dd></div>
       <div id="pill-countries"><dt>Countries</dt><dd>0</dd></div>
@@ -40,7 +40,6 @@
           <span><i class="key normal"></i>normal</span>
         </div>
         <button id="btn-rotate" type="button" class="link" hidden title="Start or stop the globe spinning">Stop rotation</button>
-        <button id="btn-clear-map" type="button" class="link" title="Remove lines for connections that have already closed">Clear map</button>
       </div>
       <div id="globe"></div>
       <canvas id="flatmap" hidden></canvas>
@@ -57,10 +56,15 @@
       </div>
 
       <div id="caught-view">
-        <p class="panel-sub">Apps tracking you or phoning home, nosiest first.</p>
+        <p class="panel-sub">Apps tracking you or phoning home right now, nosiest first.</p>
         <div id="malware-alert" class="malware-alert" role="alert" hidden></div>
         <div id="caught-list" class="caught-list"></div>
         <div id="unattributed" class="unattributed" hidden></div>
+        <details id="earlier-box" class="drawer" hidden>
+          <summary>Earlier <span id="earlier-count" class="count">0</span></summary>
+          <p class="panel-sub">Caught earlier, not connected right now. You can still block them, and the report counts them.</p>
+          <div id="earlier-list" class="caught-list"></div>
+        </details>
         <label class="show-all"><input type="checkbox" id="show-all"> Show clean apps too</label>
         <details id="blocked-box" class="drawer" hidden>
           <summary>Blocked <span id="blocked-count" class="count">0</span></summary>

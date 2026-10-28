@@ -29,6 +29,8 @@ MAX_IPS = 20000
 MAX_SEEN_NAMES = 50000
 
 TYPE_A, TYPE_CNAME, TYPE_AAAA = 1, 5, 28
+# Hosts-file blocks (netpulse's own included) sit in the cache pointing here; they're not lookups.
+SINKHOLES = {"0.0.0.0", "127.0.0.1", "::", "::1"}
 _KV = re.compile(r"^\s*\S.*?\s:\s(.*?)\s*$")
 
 
@@ -83,6 +85,8 @@ class DnsCache:
         cname_parents: dict[str, set[str]] = {}
         addresses: list[tuple[str, int, str]] = []
         for name, rtype, ttl, data in records:
+            if rtype != TYPE_CNAME and data in SINKHOLES:
+                continue
             self.seen_names[name] = now
             self.seen_names.move_to_end(name)
             if rtype == TYPE_CNAME:

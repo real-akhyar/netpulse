@@ -51,6 +51,13 @@ It finds:
   - fake system files: a `svchost.exe` or `lsass.exe` running from outside the Windows folder;
   - programs running from Temp, Downloads, the Recycle Bin or the Public folder;
   - binaries whose digital signature is broken (tampered after signing).
+
+The dashboard is **live**: the map, the Caught list and the counts in the top bar show what's
+connected right now. When a tracker connection closes, its line and its count go away within about
+20 seconds, and the app moves to a collapsed **Earlier** list, where you can still review and block
+it. Known malware is the exception: it stays up until you block it or clear the list. The
+[privacy report card](#privacy-report-card) counts everything caught in the period, with each app's
+last-active time.
 - **Where it all goes** — country and network owner for every endpoint, drawn on the globe.
 
 Click any culprit to see every host it talked to and why it was flagged, plus who the app really
@@ -136,8 +143,7 @@ Each part of the dashboard can also be cleared on its own:
 
 | Button | Where | What it clears |
 |---|---|---|
-| **Clear map** | above the map | lines for connections that have already closed |
-| **Clear list** | Caught tab | the culprits caught so far (apps still talking reappear) |
+| **Clear list** | Caught tab | the culprits caught so far, Earlier included (apps still talking reappear) |
 | **Clear timeline** | Timeline tab | the saved timeline events |
 | **Clear trust list** | Trusted drawer | every trust rule |
 | **New period** | top bar | starts a fresh report card period (older activity stays in history) |

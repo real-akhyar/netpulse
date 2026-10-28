@@ -195,6 +195,8 @@ main { display: flex; min-height: 0; }
 .culprit.mild .sev-bar { background: var(--amber); }
 .culprit.clean .sev-bar { background: var(--line-strong); }
 .culprit.clean { opacity: 0.7; }
+.culprit.earlier { opacity: 0.75; }
+.culprit.earlier .sev-bar { opacity: 0.5; }
 .culprit.fresh .c-name { animation: tick 0.8s ease-out; }
 .c-body { min-width: 0; }
 .c-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
