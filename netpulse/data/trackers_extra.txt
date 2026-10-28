@@ -1,0 +1,88 @@
+# netpulse curated tracker supplement (MIT, part of netpulse)
+# OISD small is tuned to *block without breaking sites*, so it omits big analytics/ad/telemetry
+# domains that we still want to *detect*. Unambiguous trackers only; one domain per line
+# (subdomains match too).
+
+# Google ads & analytics
+google-analytics.com
+googletagmanager.com
+googleadservices.com
+googlesyndication.com
+doubleclick.net
+app-measurement.com
+adservice.google.com
+
+# Ad exchanges / SSPs / DSPs
+adnxs.com
+criteo.com
+criteo.net
+rubiconproject.com
+pubmatic.com
+openx.net
+casalemedia.com
+adsrvr.org
+amazon-adsystem.com
+moatads.com
+taboola.com
+outbrain.com
+media.net
+3lift.com
+bidswitch.net
+smartadserver.com
+yieldmo.com
+sharethrough.com
+teads.tv
+
+# Analytics / session replay / product analytics
+scorecardresearch.com
+quantserve.com
+chartbeat.com
+chartbeat.net
+hotjar.com
+hotjar.io
+mixpanel.com
+api.segment.io
+cdn.segment.com
+api.amplitude.com
+api2.amplitude.com
+clarity.ms
+fullstory.com
+mouseflow.com
+heap.io
+heapanalytics.com
+bam.nr-data.net
+permutive.com
+permutive.app
+parsely.com
+omtrdc.net
+demdex.net
+everesttech.net
+krxd.net
+bluekai.com
+adobedtm.com
+branch.io
+app.adjust.com
+appsflyer.com
+onesignal.com
+
+# Social pixels
+connect.facebook.net
+pixel.facebook.com
+static.ads-twitter.com
+analytics.twitter.com
+ads.linkedin.com
+px.ads.linkedin.com
+snap.licdn.com
+analytics.tiktok.com
+ads.tiktok.com
+bat.bing.com
+ct.pinterest.com
+
+# OS / app telemetry
+events.data.microsoft.com
+vortex.data.microsoft.com
+telemetry.microsoft.com
+browser.events.data.msn.com
+watson.telemetry.microsoft.com
+telemetry.dropbox.com
+metrics.icloud.com

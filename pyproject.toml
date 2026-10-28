@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "netpulse"
+version = "0.1.0"
+description = "See which apps on your computer are tracking you or phoning home — and block them. Offline, no key."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "websockets>=12",
+    "psutil>=5.9",
+    "pydantic>=2.6",
+    "geoip2>=4.8",
+    "rich>=13.7",
+]
+
+[project.scripts]
+netpulse = "netpulse.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["netpulse*"]
+
+[tool.setuptools.package-data]
+netpulse = ["web/*", "web/vendor/*", "data/*"]

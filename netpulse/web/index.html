@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>netpulse</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="beacon"></span><span>net<b>pulse</b></span></div>
+    <div class="pills">
+      <div class="pill" id="pill-apps"><b>0</b><span>apps watched</span></div>
+      <div class="pill pill-tracker" id="pill-trackers"><b>0</b><span>trackers caught</span></div>
+      <div class="pill" id="pill-countries"><b>0</b><span>countries</span></div>
+      <div class="pill pill-suspicious" id="pill-suspicious"><b>0</b><span>suspicious</span></div>
+    </div>
+    <div class="actions">
+      <button id="btn-pause" type="button">Pause</button>
+      <button id="btn-export" type="button" class="primary">Export blocklist</button>
+    </div>
+  </header>
+
+  <main>
+    <section id="map" aria-label="Map of where this computer's connections go">
+      <div id="globe"></div>
+      <canvas id="flatmap" hidden></canvas>
+      <div id="flat-tip" class="map-tip" hidden></div>
+      <div class="legend">
+        <span><i class="dot tracker"></i>tracker</span>
+        <span><i class="dot suspicious"></i>suspicious</span>
+        <span><i class="dot normal"></i>normal</span>
+      </div>
+      <div id="map-empty" class="map-empty">Listening… use your laptop normally and connections will appear.</div>
+      <div id="map-paused" class="map-paused" hidden>⏸ Paused — press Resume to keep watching</div>
+    </section>
+
+    <aside id="panel">
+      <div id="caught-view">
+        <div class="panel-head">
+          <h2>Caught</h2>
+          <span class="sub">apps tracking you or phoning home</span>
+        </div>
+        <div id="caught-list" class="caught-list"></div>
+        <div id="unattributed" class="unattributed" hidden></div>
+        <label class="show-all"><input type="checkbox" id="show-all"> show clean apps too</label>
+      </div>
+
+      <div id="detail-view" hidden>
+        <div class="detail-bar">
+          <button id="btn-back" type="button" class="link">← Caught</button>
+          <span class="detail-buttons">
+            <button id="btn-explain" type="button" hidden>What are these?</button>
+            <button id="btn-detail-block" type="button" class="block">Block</button>
+          </span>
+        </div>
+        <div id="detail"></div>
+      </div>
+    </aside>
+  </main>
+
+  <footer>
+    <span>Monitors only this computer's own connections — for machines you own.</span>
+    <span id="conn-state" class="conn-state">connecting…</span>
+  </footer>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-head">
+        <h3 id="modal-title">Block</h3>
+        <button id="modal-close" type="button" class="link" aria-label="Close">✕</button>
+      </div>
+      <div class="tabs" role="tablist">
+        <button type="button" class="tab" data-format="hosts">Hosts file</button>
+        <button type="button" class="tab" data-format="windows_fw" data-os="Windows">Windows Firewall</button>
+        <button type="button" class="tab" data-format="pf" data-os="Mac">macOS pf</button>
+      </div>
+      <div id="modal-summary" class="modal-summary"></div>
+      <pre id="modal-text" class="rules"></pre>
+      <div class="modal-foot">
+        <span class="note">Add these to your hosts file / firewall to block. (Live one-click blocking is on the roadmap.)</span>
+        <div class="modal-actions">
+          <button id="modal-save" type="button">Save file</button>
+          <button id="modal-copy" type="button" class="primary">Copy</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" hidden></div>
+
+  <script src="/static/vendor/globe.gl.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
