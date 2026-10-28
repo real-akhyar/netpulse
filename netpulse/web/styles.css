@@ -40,6 +40,11 @@ button {
 }
 button:hover { background: rgba(255, 255, 255, 0.12); border-color: rgba(120, 160, 255, 0.35); }
 button.primary { background: linear-gradient(135deg, #ff3b5c, #b46bff); border: 0; font-weight: 600; }
+a.btn {
+  display: inline-block; color: var(--text); text-decoration: none;
+  background: rgba(255, 255, 255, 0.06); border: 1px solid var(--line); border-radius: 8px; padding: 6px 14px;
+}
+a.btn:hover { background: rgba(255, 255, 255, 0.12); border-color: rgba(120, 160, 255, 0.35); }
 button.primary:hover { filter: brightness(1.12); }
 button.link { background: none; border: 0; padding: 0; color: var(--muted); }
 button.link:hover { color: var(--text); }

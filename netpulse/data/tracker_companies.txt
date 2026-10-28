@@ -1,0 +1,80 @@
+# netpulse tracker-domain -> company map (MIT, part of netpulse)
+# Used by the privacy report's "trackers by company". A domain matches itself and its subdomains;
+# the longest matching entry wins. format: domain<TAB>company
+google-analytics.com	Google
+googletagmanager.com	Google
+googleadservices.com	Google
+googlesyndication.com	Google
+doubleclick.net	Google
+app-measurement.com	Google
+adservice.google.com	Google
+googletagservices.com	Google
+2mdn.net	Google
+connect.facebook.net	Meta
+facebook.com	Meta
+facebook.net	Meta
+fbcdn.net	Meta
+instagram.com	Meta
+events.data.microsoft.com	Microsoft
+vortex.data.microsoft.com	Microsoft
+telemetry.microsoft.com	Microsoft
+browser.events.data.msn.com	Microsoft
+clarity.ms	Microsoft
+bat.bing.com	Microsoft
+adnxs.com	Microsoft (Xandr)
+ads.linkedin.com	Microsoft (LinkedIn)
+px.ads.linkedin.com	Microsoft (LinkedIn)
+snap.licdn.com	Microsoft (LinkedIn)
+amazon-adsystem.com	Amazon
+scorecardresearch.com	Comscore
+quantserve.com	Quantcast
+hotjar.com	Hotjar
+hotjar.io	Hotjar
+mixpanel.com	Mixpanel
+segment.io	Twilio Segment
+segment.com	Twilio Segment
+amplitude.com	Amplitude
+fullstory.com	FullStory
+mouseflow.com	Mouseflow
+heap.io	Heap
+heapanalytics.com	Heap
+nr-data.net	New Relic
+chartbeat.com	Chartbeat
+chartbeat.net	Chartbeat
+parsely.com	Parse.ly
+permutive.com	Permutive
+permutive.app	Permutive
+omtrdc.net	Adobe
+demdex.net	Adobe
+everesttech.net	Adobe
+adobedtm.com	Adobe
+krxd.net	Salesforce
+bluekai.com	Oracle
+moatads.com	Oracle
+criteo.com	Criteo
+criteo.net	Criteo
+bidswitch.net	Criteo
+taboola.com	Taboola
+outbrain.com	Outbrain
+rubiconproject.com	Magnite
+pubmatic.com	PubMatic
+openx.net	OpenX
+casalemedia.com	Index Exchange
+adsrvr.org	The Trade Desk
+media.net	Media.net
+3lift.com	TripleLift
+smartadserver.com	Equativ
+yieldmo.com	Yieldmo
+sharethrough.com	Sharethrough
+teads.tv	Teads
+analytics.tiktok.com	ByteDance (TikTok)
+ads.tiktok.com	ByteDance (TikTok)
+static.ads-twitter.com	X (Twitter)
+analytics.twitter.com	X (Twitter)
+ct.pinterest.com	Pinterest
+branch.io	Branch
+appsflyer.com	AppsFlyer
+app.adjust.com	Adjust
+onesignal.com	OneSignal
+telemetry.dropbox.com	Dropbox
+metrics.icloud.com	Apple

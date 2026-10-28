@@ -213,6 +213,9 @@ def main(argv: list[str] | None = None) -> None:
     watch.add_argument("--alerts", default="all", choices=["all", "critical", "off"],
                        help="desktop notifications: all news, critical only, or off (default all)")
     sub.add_parser("test-alert", help="send one desktop notification to check they show up")
+    rep = sub.add_parser("report", help="write a shareable privacy report card from saved history")
+    rep.add_argument("-o", "--output", help="file to write (default netpulse-report-YYYY-MM-DD.html)")
+    rep.add_argument("--open", action="store_true", help="open it in the browser afterwards")
     hist = sub.add_parser("history", help="show what apps did over the last days (saved findings)")
     hist.add_argument("--days", type=float, default=7, help="how far back to show (default 7)")
     hist.add_argument("--all", action="store_true", help="include info-level events like 'went online for the first time'")
@@ -224,6 +227,24 @@ def main(argv: list[str] | None = None) -> None:
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     console = Console()
+
+    if args.command == "report":
+        from pathlib import Path
+
+        from netpulse.report import collect, render
+
+        # A pipeline restored from history (never started): the last 30 days, with your trust list applied.
+        pipeline = Pipeline(history=HistoryStore(), trust=TrustStore())
+        data = collect(pipeline)
+        out = Path(args.output or f"netpulse-report-{time.strftime('%Y-%m-%d')}.html").resolve()
+        out.write_text(render(data), encoding="utf-8")
+        console.print(f"Grade [bold]{data.grade}[/] — {data.summary}")
+        console.print(f"[green]Report written:[/] {out}  [grey50](app names only — safe to share)[/]")
+        if args.open:
+            import webbrowser
+
+            webbrowser.open(out.as_uri())
+        return
 
     if args.command == "test-alert":
         ok = send_notification("netpulse: test alert", "If you can see this, desktop alerts work.")

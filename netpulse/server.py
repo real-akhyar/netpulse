@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -23,6 +23,7 @@ from netpulse.alerts import Alerter
 from netpulse.llm.client import Explainer, LLMConfig
 from netpulse.models import Connection
 from netpulse.pipeline import Pipeline
+from netpulse.report import collect, render
 from netpulse.store import HistoryStore
 from netpulse.trust import TrustStore
 
@@ -298,6 +299,15 @@ def create_app(
             targets = ranker.block_targets(min_severity=hub.min_severity)
         result = generate(targets, req.format, extra_domains=req.domains)
         return {"text": result.text, "filename": result.filename, "domains": result.domains, "ips": result.ips}
+
+    @app.get("/report", include_in_schema=False)
+    async def privacy_report(download: bool = False) -> HTMLResponse:
+        """Shareable privacy report card: self-contained HTML, app names only, paths redacted."""
+        page = render(collect(hub.pipeline, hub.min_severity))
+        headers = {}
+        if download:
+            headers["Content-Disposition"] = f'attachment; filename="netpulse-report-{time.strftime("%Y-%m-%d")}.html"'
+        return HTMLResponse(page, headers=headers)
 
     @app.get("/api/blocks")
     async def blocks_status() -> dict:

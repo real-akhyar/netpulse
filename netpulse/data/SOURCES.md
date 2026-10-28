@@ -6,6 +6,7 @@
 | `dbip-asn-lite.mmdb` | [DB-IP IP to ASN Lite](https://db-ip.com/db/download/ip-to-asn-lite) | 2026-10 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) — "IP Geolocation by DB-IP" |
 | `trackers.txt` | [OISD small](https://oisd.nl) (`domainswild2`, 59,447 entries) | 2026-10-28 | [GPL-3.0](https://github.com/sjhgvr/oisd/blob/main/LICENSE) — redistributed unmodified as a separate data file |
 | `trackers_extra.txt` | netpulse curated supplement — major analytics/ad/telemetry domains OISD small omits (it's tuned not to break sites; we detect, not block) | 2026-10-28 | MIT (part of netpulse) |
+| `tracker_companies.txt` | netpulse curated map of tracker domains to the companies behind them (privacy report) | 2026-10-28 | MIT (part of netpulse) |
 | `country_centroids.csv` | [Google DSPL countries.csv](https://developers.google.com/public-data/docs/canonical/countries_csv) | 2026-10-28 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
 
 | `threat_domains.txt` | [HaGeZi Threat Intelligence Feeds](https://github.com/hagezi/dns-blocklists) "mini" domains + [URLhaus](https://urlhaus.abuse.ch) hosts via [malware-filter](https://gitlab.com/malware-filter/urlhaus-filter) (213,714 domains) | 2026-10-27 / 2026-10-28 | HaGeZi: GPL-3.0 (redistributed as data); URLhaus: CC0 |

@@ -128,6 +128,26 @@ netpulse history            # last 7 days; --days 30, --all for info-level event
 The history stays on your machine (`%LOCALAPPDATA%\netpulse\history.db` on Windows), keeps 30 days,
 and is wiped with `netpulse history --clear`. Run `netpulse watch --no-history` to keep nothing.
 
+## Privacy report card
+
+Click **📄 Report** in the dashboard (or run `netpulse report`) for a one-page report card you can
+share: a **grade from A to F** for your computer, the nosiest apps with their verdicts, **trackers
+by company** (Google, Meta, Microsoft, Comscore…), where your data goes by country, and anything
+that needs attention.
+
+It's built to be shared safely: app names only — no file paths, usernames, machine name or your own
+IP address (profile paths inside verdicts are redacted to `C:\Users\…`) — and it's a single
+self-contained HTML file with no scripts or external resources, so it opens anywhere and phones
+nowhere.
+
+```bash
+netpulse report             # from the last 30 days of history -> netpulse-report-YYYY-MM-DD.html
+netpulse report --open      # and open it
+```
+
+Grading: known malware is always an F, an app behaving like malware caps the grade at D, and
+trackers, beacons and bare-IP connections lower it gradually. Trusted apps aren't counted.
+
 ## Desktop alerts
 
 You don't have to watch the dashboard. netpulse pops a native notification when something new
@@ -192,6 +212,7 @@ netpulse watch [--headless] [--port 8900] [--host 127.0.0.1] [--interval 2]
 netpulse history [--days 7] [--all] [--clear]
 netpulse trust [--remove VALUE] [--clear]
 netpulse test-alert
+netpulse report [-o FILE] [--open]
 ```
 
 - `--headless` — live terminal table and Caught summary, no browser.
@@ -214,6 +235,7 @@ All bundled in [`netpulse/data/`](netpulse/data/SOURCES.md) and [`netpulse/web/v
 | IP → network owner | [DB-IP IP to ASN Lite](https://db-ip.com) | 2026-10 | CC BY 4.0 — *IP Geolocation by DB-IP* |
 | Tracker domains | [OISD small](https://oisd.nl) (59,447 domains) | 2026-10-28 | GPL-3.0, redistributed unmodified |
 | Tracker supplement | netpulse's curated list of major analytics/ad/telemetry domains | 2026-10-28 | MIT |
+| Tracker → company map | netpulse's curated map of ~75 tracker domains to their companies | 2026-10-28 | MIT |
 | Malware domains & IPs | [HaGeZi Threat Intelligence Feeds](https://github.com/hagezi/dns-blocklists) (mini) | 2026-10-27 | GPL-3.0, redistributed as data |
 | Malware hosts | [URLhaus](https://urlhaus.abuse.ch) via [malware-filter](https://gitlab.com/malware-filter/urlhaus-filter) | 2026-10-28 | CC0 |
 | Botnet C2 IPs | [Feodo Tracker](https://feodotracker.abuse.ch) (abuse.ch) | 2026-10-28 | CC0 |
