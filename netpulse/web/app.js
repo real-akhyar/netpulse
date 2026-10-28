@@ -17,6 +17,7 @@ const state = {
   open: new Map(), // id -> connection currently open
   history: new Map(), // id -> connection incl. closed ones (closedAt), for arcs + detail
   procs: new Map(), // app -> ProcessAgg
+  blockedDomains: new Set(), // domains netpulse has blocked (hosts file), from /api/blocks
   stats: null,
   paused: false,
   selected: null, // app key shown in the detail view
@@ -154,7 +155,7 @@ function onReset(target) {
     state.fresh.clear();
     lastPanelHtml = '';
     if (state.selected) closeDetail();
-    scheduleRender({ panel: true });
+    scheduleRender({ panel: true, map: true });
   } else if (target === 'map') {
     for (const [id, c] of state.history) if (c.closedAt) state.history.delete(id);
     scheduleRender({ map: true });
@@ -199,7 +200,7 @@ function trimHistory() {
 function updateProcess(p) {
   if (!isCulprit(state.procs.get(p.app)) && isCulprit(p)) state.fresh.add(p.app);
   state.procs.set(p.app, p);
-  scheduleRender({ panel: true });
+  scheduleRender({ panel: true, map: true });  // a culprit's flagged lines stay on the map
 }
 
 function updateStats(s) {
@@ -785,7 +786,8 @@ async function applyBlock() {
     if (!out.ok) throw new Error(out.error || 'not applied');
     renderBlocked(out);
     closeModal();
-    toast(`Blocked ${plural(out.domains, 'domain')}${out.ips ? ` + ${plural(out.ips, 'IP')}` : ''}. Undo anytime under "Blocked".`, 5000);
+    toast(`Blocked ${plural(out.domains, 'domain')}${out.ips ? ` + ${plural(out.ips, 'IP')}` : ''}. Connections already open `
+      + 'carry on until the app closes them (restart it to cut them now). Undo anytime under "Blocked".', 7000);
     if (out.warnings && out.warnings.length) setTimeout(() => toast(out.warnings[0], 7000), 5200);
   } catch (err) {
     $('modal-note').className = 'note modal-note-warn';
@@ -816,6 +818,8 @@ async function loadBlocked() {
 
 function renderBlocked(summary) {
   const entries = summary.entries || [];
+  state.blockedDomains = new Set(entries.filter((e) => e.kind === 'domain' && e.active).map((e) => e.value));
+  scheduleRender({ map: true });
   $('blocked-box').hidden = !entries.length;
   $('blocked-count').textContent = entries.length;
   $('blocked-list').innerHTML = entries.map((e) => `<div class="trusted-row ${e.active ? '' : 'inactive'}" title="${e.active ? '' : 'Not in the hosts file any more (edited by hand or reverted by antivirus)'}">
@@ -826,16 +830,41 @@ function renderBlocked(summary) {
 
 // ---------------------------------------------------------------- map data (shared)
 
+// Stable 0..1 per key, so each endpoint's line keeps the same arc height between renders.
+function spreadOf(key) {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 16777619);
+  return (h >>> 0) / 4294967296;
+}
+
+const isBlocked = (c) => state.blockedDomains.has(hostOf(c)) || state.blockedDomains.has(c.tracker_rule);
+
+// A closed connection stays on the map for ARC_LINGER_MS — or, if it was a tracker/suspicious/
+// malware endpoint, for as long as its app is still in Caught (short beacons would otherwise
+// flash for a minute and vanish). Once blocked, or after "Clear list", it goes.
+function onMap(c, now) {
+  if (c.scope !== 'public' || c.lat == null) return false;
+  if (!c.closedAt) return true;
+  if (isBlocked(c)) return false;
+  if (now - c.closedAt <= ARC_LINGER_MS) return true;
+  return c.category !== 'normal' && isCulprit(state.procs.get(c.app));
+}
+
 function arcGroups() {
   const now = Date.now();
   const groups = new Map();
   for (const c of state.history.values()) {
-    if (c.scope !== 'public' || c.lat == null) continue;
-    if (c.closedAt && now - c.closedAt > ARC_LINGER_MS) continue;
-    const key = `${c.country}|${c.category}`;
+    if (!onMap(c, now)) continue;
+    // One line per remote endpoint (GeoIP is country-level, so they'd all overlap: each gets its
+    // own arc height instead).
+    const key = `${hostOf(c)}|${c.category}`;
     let g = groups.get(key);
     if (!g) {
-      g = { key, country: c.country, category: c.category, lat: c.lat, lon: c.lon, count: 0, open: 0, apps: new Map(), hosts: new Map() };
+      // Land each line a little way off the country's centre (up to ~2°), in its own direction.
+      const turn = spreadOf(key + '#') * 2 * Math.PI, reach = 0.5 + 1.5 * spreadOf(key + '@');
+      g = { key, country: c.country, category: c.category, clat: c.lat, clon: c.lon,
+            lat: c.lat + Math.sin(turn) * reach, lon: c.lon + Math.cos(turn) * reach,
+            count: 0, open: 0, apps: new Map(), hosts: new Map(), spread: spreadOf(key) };
       groups.set(key, g);
     }
     g.count += 1;
@@ -864,7 +893,7 @@ function endpoints(groups) {
   const byCountry = new Map();
   for (const g of groups.values()) {
     const e = byCountry.get(g.country);
-    if (!e) byCountry.set(g.country, { lat: g.lat, lon: g.lon, count: g.count, category: g.category, groups: [g] });
+    if (!e) byCountry.set(g.country, { lat: g.clat, lon: g.clon, count: g.count, category: g.category, groups: [g] });
     else {
       e.count += g.count;
       e.groups.push(g);
@@ -876,6 +905,14 @@ function endpoints(groups) {
 
 function endpointTip(e) {
   return e.groups.sort((a, b) => RANK[b.category] - RANK[a.category]).map(groupTip).join('<hr>');
+}
+
+// Arc height grows with distance; `spread` (0..1) fans out lines that land in the same country.
+function arcAltitude(o, lat, lon, spread) {
+  const r = Math.PI / 180;
+  const cos = Math.sin(o.lat * r) * Math.sin(lat * r) + Math.cos(o.lat * r) * Math.cos(lat * r) * Math.cos((lon - o.lon) * r);
+  const angle = Math.acos(Math.max(-1, Math.min(1, cos)));
+  return Math.max(0.03 + 0.05 * spread, angle * (0.1 + 0.22 * spread));
 }
 
 function updateMap() {
@@ -908,16 +945,17 @@ function createGlobeMap(container, world) {
     .polygonsTransitionDuration(0)
     .polygonLabel((f) => `<div class="globe-tip">${esc(f.properties.name)}</div>`)
     .arcStartLat('startLat').arcStartLng('startLng').arcEndLat('endLat').arcEndLng('endLng')
-    // Red and yellow lines are solid in their category colour end to end; normal ones stay faint
-    // grey so the problems stand out.
-    .arcColor((d) => (d.category === 'normal' ? [hexA(COLORS.normal, 0.12), hexA(COLORS.normal, 0.5)] : COLORS[d.category]))
+    // Red and yellow lines are solid in their category colour end to end (dimmer once the app has
+    // no connection open there); normal ones are a quieter grey so the problems stand out.
+    .arcColor((d) => (d.category === 'normal' ? [hexA(COLORS.normal, 0.25), hexA(COLORS.normal, 0.75)]
+      : d.live ? COLORS[d.category] : hexA(COLORS[d.category], 0.5)))
     // Malware: heaviest and still; trackers/suspicious: a long moving dash; normal: a thin dash.
-    .arcStroke((d) => (d.category === 'malware' ? 1.6 : Math.min(1.2, (d.category === 'normal' ? 0.2 : 0.6) + Math.log2(1 + d.count) * 0.12)))
+    .arcStroke((d) => (d.category === 'malware' ? 1.6 : Math.min(1.2, (d.category === 'normal' ? 0.3 : 0.6) + Math.log2(1 + d.count) * 0.1)))
     .arcDashLength((d) => ({ malware: 1, tracker: 0.7, suspicious: 0.7 }[d.category] ?? 0.35))
     .arcDashGap((d) => ({ malware: 0, tracker: 0.15, suspicious: 0.15 }[d.category] ?? 0.4))
     .arcDashInitialGap(() => Math.random())
     .arcDashAnimateTime((d) => ({ malware: 0, tracker: 1800, suspicious: 2600 }[d.category] ?? 4500))
-    .arcAltitudeAutoScale(0.3)
+    .arcAltitude('alt')
     .arcLabel((d) => `<div class="globe-tip">${groupTip(d.group)}</div>`)
     .pointLat('lat').pointLng('lng').pointColor('color').pointAltitude(0.012).pointRadius('radius')
     .pointLabel((d) => `<div class="globe-tip">${d.tip}</div>`)
@@ -970,7 +1008,9 @@ function createGlobeMap(container, world) {
         let a = arcs.get(g.key);
         if (!a) { a = { key: g.key }; arcs.set(g.key, a); changed = true; }
         const off = OFFSET[g.category];
-        const next = { startLat: o.lat, startLng: o.lon, endLat: g.lat + off[0], endLng: g.lon + off[1], category: g.category, count: g.count };
+        const endLat = g.lat + off[0], endLng = g.lon + off[1];
+        const next = { startLat: o.lat, startLng: o.lon, endLat, endLng, category: g.category, count: g.count,
+                       live: g.open > 0, alt: arcAltitude(o, endLat, endLng, g.spread) };
         for (const k in next) if (a[k] !== next[k]) { a[k] = next[k]; changed = true; }
         a.group = g;
       }
@@ -1058,7 +1098,7 @@ function createFlatMap(canvas, world) {
     for (const g of ordered) {
       const off = OFFSET[g.category];
       const [ex, ey] = proj(g.lat + off[0], g.lon + off[1]);
-      const cx = (sx + ex) / 2, cy = (sy + ey) / 2 - Math.hypot(ex - sx, ey - sy) * 0.3;
+      const cx = (sx + ex) / 2, cy = (sy + ey) / 2 - Math.hypot(ex - sx, ey - sy) * (0.15 + 0.3 * g.spread) - 6 * g.spread;
       const color = COLORS[g.category];
       const malware = g.category === 'malware';
       ctx.lineWidth = malware ? 2.5 : Math.min(1.6, 0.8 + Math.log2(1 + g.count) * 0.25);
