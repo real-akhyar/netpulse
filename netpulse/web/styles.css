@@ -244,6 +244,19 @@ main { display: flex; min-height: 0; }
 .chip.normal { color: var(--normal); border-color: rgba(45, 226, 230, 0.35); }
 .chip.local { color: var(--local); }
 button.block { padding: 5px 10px; font-size: 12px; border-color: rgba(255, 59, 92, 0.5); color: #ffd0d8; }
+button.trust { padding: 5px 10px; font-size: 12px; color: var(--muted); }
+button.trust:hover { color: var(--normal); border-color: rgba(45, 226, 230, 0.5); }
+.c-actions { display: flex; flex-direction: column; gap: 6px; }
+.conn .trust-link { background: none; border: 0; padding: 0 2px; font-size: 11px; color: var(--muted); cursor: pointer; }
+.conn .trust-link:hover { color: var(--normal); }
+.conn { grid-template-columns: 1fr auto auto auto; }
+.trusted-box { margin-top: 14px; font-size: 12px; color: var(--muted); }
+.trusted-box summary { cursor: pointer; }
+.trusted-box[hidden] { display: none; }
+.trusted-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 5px 2px; border-bottom: 1px solid var(--line); }
+.trusted-row .v { font-family: var(--mono); font-size: 11px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trusted-row .kind { font-size: 10px; text-transform: uppercase; letter-spacing: 0.5px; margin-right: 6px; }
+.trusted-row button { padding: 2px 8px; font-size: 11px; }
 button.block:hover { background: rgba(255, 59, 92, 0.2); }
 
 .empty {

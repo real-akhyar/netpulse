@@ -92,3 +92,4 @@ class ProcessAgg(BaseModel):
     info: Optional[ProcessInfo] = None  # most recent process of this app that we inspected
     first_seen: float = 0.0  # earliest activity, including restored history
     last_seen: float = 0.0
+    trusted: bool = False  # on the user's trust list (hidden from Caught unless it touched malware)

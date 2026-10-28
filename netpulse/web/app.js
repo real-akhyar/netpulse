@@ -34,7 +34,9 @@ const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const SEVERITY = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
-const isCulprit = (p) => !!p && (p.tracker_count > 0 || p.suspicious_count > 0 || p.alert_count > 0 || p.malware_count > 0)
+// Trusted apps leave the Caught list — unless they touched known malware, which trust never hides.
+const isCulprit = (p) => !!p && (!p.trusted || p.malware_count > 0)
+  && (p.tracker_count > 0 || p.suspicious_count > 0 || p.alert_count > 0 || p.malware_count > 0)
   && SEVERITY[p.severity || 'info'] >= SEVERITY[state.stats?.min_severity || 'low'];
 const hostOf = (c) => c.remote_host || c.raddr;
 const countryName = (code) => state.countryNames.get(code) || code || 'Unknown';
@@ -164,7 +166,12 @@ function updateStats(s) {
   $('map-paused').hidden = !state.paused;
   $('tab-timeline').hidden = !s.history;
   if (s.history && !state.awayChecked) checkAway();
-  if (prev && prev.min_severity !== s.min_severity) scheduleRender({ panel: true });
+  const trustKey = JSON.stringify(s.trust || {});
+  if (prev && (prev.min_severity !== s.min_severity || JSON.stringify(prev.trust || {}) !== trustKey)) {
+    lastPanelHtml = '';
+    scheduleRender({ panel: true });
+    if (state.view === 'timeline') loadTimeline();
+  }
   renderUnattributed(s.unattributed || []);
 }
 
@@ -209,6 +216,7 @@ function renderPanel() {
   if (html !== lastPanelHtml) {
     $('caught-list').innerHTML = html;
     lastPanelHtml = html;
+    renderTrusted();
   }
   state.fresh.clear();
 }
@@ -235,7 +243,10 @@ function culpritRow(p) {
   const chips = p.top_trackers.length || sigChip || alertChip || malwareChip
     ? `<div class="chips">${malwareChip}${alertChip}${sigChip}${p.top_trackers.slice(0, 4).map((d) => `<span class="chip tracker">${esc(d)}</span>`).join('')}</div>`
     : '';
-  const block = isCulprit(p) ? `<button type="button" class="block" data-block="${esc(p.app)}">Block</button>` : '';
+  const block = isCulprit(p) ? `<div class="c-actions">
+      <button type="button" class="block" data-block="${esc(p.app)}">Block</button>
+      ${p.trusted ? '' : `<button type="button" class="trust" data-trust-app="${esc(p.app)}" title="Mark as expected: hide it from Caught">Trust</button>`}
+    </div>` : '';
   return `<div class="culprit ${kind} ${fresh}" data-app="${esc(p.app)}">
     <div class="glyph">${esc((p.name || '?')[0].toUpperCase())}</div>
     <div class="c-body">
@@ -277,7 +288,10 @@ function renderDetail() {
   const rows = new Map();
   for (const c of conns) {
     const key = `${hostOf(c)}|${c.rport}|${c.category}`;
-    const r = rows.get(key) || { host: hostOf(c), ip: c.raddr, port: c.rport, category: c.category, country: c.country, n: 0, open: 0 };
+    // What "trust" on this row would cover: the tracker/malware rule if there is one, else the host.
+    const isIp = (c.threat_indicator || '').match(/^[\d.:]+$/);
+    const rule = c.tracker_rule || (!isIp && c.threat_indicator) || c.remote_host;
+    const r = rows.get(key) || { host: hostOf(c), ip: c.raddr, port: c.rport, category: c.category, country: c.country, rule, n: 0, open: 0 };
     r.n += 1;
     if (!c.closedAt) r.open += 1;
     rows.set(key, r);
@@ -315,12 +329,16 @@ function renderDetail() {
         <span class="host" title="${esc(r.ip)}">${esc(r.host)}:${r.port}</span>
         <span class="meta">${esc(r.country || '—')}${r.n > 1 ? ` ×${r.n}` : ''}</span>
         <span class="chip ${esc(r.category)}">${esc(r.category)}</span>
+        ${RANK[r.category] >= RANK.suspicious && r.rule
+          ? `<button type="button" class="trust-link" data-trust-domain="${esc(r.rule)}" data-category="${esc(r.category)}" title="Trust ${esc(r.rule)} and its subdomains">trust</button>`
+          : '<span></span>'}
       </div>`).join('')}
     </div>`;
   // The Block button lives outside the re-rendered area so it's never swapped out under a click.
   const block = $('btn-detail-block');
   block.hidden = !isCulprit(p);
   block.textContent = `Block ${p.name}`;
+  $('btn-detail-trust').textContent = p.trusted ? 'Untrust app' : 'Trust app';
   const explain = $('btn-explain');
   explain.hidden = !(state.stats?.llm && p.top_trackers.some((d) => !state.explanations.has(d)));
   if (html !== lastDetailHtml) {
@@ -435,8 +453,13 @@ async function loadTimeline() {
     $('timeline-list').innerHTML = `<div class="empty">Couldn't load the timeline (${esc(err.message)}).</div>`;
     return;
   }
-  const html = events.length ? timelineHtml(events)
-    : '<div class="empty">Nothing recorded yet.<br>Findings appear here the first time each app does something worth knowing — and stay after restarts.</div>';
+  // Trusted apps and domains stay out of the timeline (known malware always shows).
+  const trustedApps = new Set(((state.stats && state.stats.trust) || {}).apps || []);
+  const visible = events.filter((e) => e.kind === 'known_malware' || (!trustedApps.has(e.app) && !trustCovers(e.key)));
+  const hidden = events.length - visible.length;
+  const note = hidden ? `<div class="k" style="font-size:12px;margin-top:6px">${plural(hidden, 'finding')} about trusted apps or domains hidden.</div>` : '';
+  const html = (visible.length ? timelineHtml(visible)
+    : '<div class="empty">Nothing recorded yet.<br>Findings appear here the first time each app does something worth knowing — and stay after restarts.</div>') + note;
   if (html !== lastTimelineHtml) {
     $('timeline-list').innerHTML = html;
     lastTimelineHtml = html;
@@ -482,6 +505,7 @@ function historySection(app, liveKeys) {
       <span class="host" title="${esc(r.ip)}">${esc(r.host || r.ip)}:${r.port}</span>
       <span class="meta">${esc(r.country || '—')} · ${esc(ago(r.last_seen))}</span>
       <span class="chip ${esc(r.category)}">${esc(r.category)}</span>
+      <span></span>
     </div>`).join('');
   const findings = h.findings.slice(0, 40).map((f) => `<div class="tl-row">
       <span class="t">${esc(new Date(f.first_seen * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}</span>
@@ -490,6 +514,59 @@ function historySection(app, liveKeys) {
     </div>`).join('');
   return `${findings ? `<div class="section">History</div><div class="timeline-list">${findings}</div>` : ''}
     ${earlierRows ? `<div class="section">Earlier connections (${earlier.length})</div><div class="conn-list">${earlierRows}</div>` : ''}`;
+}
+
+// ---------------------------------------------------------------- trust list
+
+function trustedDomains() {
+  return (state.stats && state.stats.trust && state.stats.trust.domains) || [];
+}
+
+function trustCovers(host) {
+  if (!host) return false;
+  const labels = String(host).toLowerCase().split('.');
+  const domains = new Set(trustedDomains());
+  return labels.some((_, i) => domains.has(labels.slice(i).join('.')));
+}
+
+async function setTrust(kind, value, name, on) {
+  try {
+    const res = await fetch(on ? '/api/trust' : '/api/untrust', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ kind, value, name }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+    toast(on ? `Trusted ${name}. It won't be called out any more (known malware still will).` : `${name} is no longer trusted.`);
+    lastPanelHtml = '';
+  } catch (err) {
+    toast(`Couldn't update the trust list: ${err.message}`);
+  }
+}
+
+function trustApp(app) {
+  const p = state.procs.get(app);
+  if (p) setTrust('app', app, p.name, !p.trusted);
+}
+
+function trustDomain(domain, category) {
+  if (category === 'malware' && !confirm(`${domain} is on a known-malware list. Only trust it if you're sure it's a false positive. Trust it anyway?`)) return;
+  setTrust('domain', domain, domain, true);
+}
+
+function renderTrusted() {
+  const apps = [...state.procs.values()].filter((p) => p.trusted);
+  const domains = trustedDomains();
+  const total = apps.length + domains.length;
+  $('trusted-box').hidden = !total;
+  $('trusted-count').textContent = total;
+  $('trusted-list').innerHTML = apps.map((p) => `<div class="trusted-row">
+      <span class="v" title="${esc(p.app)}"><span class="kind">app</span>${esc(p.name)}</span>
+      <button type="button" data-untrust-kind="app" data-untrust="${esc(p.app)}" data-name="${esc(p.name)}">Untrust</button>
+    </div>`).concat(domains.map((d) => `<div class="trusted-row">
+      <span class="v"><span class="kind">domain</span>${esc(d)}</span>
+      <button type="button" data-untrust-kind="domain" data-untrust="${esc(d)}" data-name="${esc(d)}">Untrust</button>
+    </div>`)).join('');
 }
 
 // ---------------------------------------------------------------- optional LLM explainer
@@ -932,11 +1009,22 @@ function bindUi() {
   $('caught-list').addEventListener('click', (e) => {
     const block = e.target.closest('[data-block]');
     if (block) { openBlock(block.dataset.block); return; }
+    const trust = e.target.closest('[data-trust-app]');
+    if (trust) { trustApp(trust.dataset.trustApp); return; }
     const row = e.target.closest('.culprit');
     if (row) openDetail(row.dataset.app);
   });
   $('btn-detail-block').addEventListener('click', () => openBlock(state.selected));
   $('btn-explain').addEventListener('click', explainTrackers);
+  $('btn-detail-trust').addEventListener('click', () => trustApp(state.selected));
+  $('detail').addEventListener('click', (e) => {
+    const el = e.target.closest('[data-trust-domain]');
+    if (el) trustDomain(el.dataset.trustDomain, el.dataset.category);
+  });
+  $('trusted-list').addEventListener('click', (e) => {
+    const el = e.target.closest('[data-untrust]');
+    if (el) setTrust(el.dataset.untrustKind, el.dataset.untrust, el.dataset.name, false);
+  });
   $('btn-back').addEventListener('click', closeDetail);
   $('tab-caught').addEventListener('click', () => { if (state.selected) closeDetail(); setView('caught'); });
   $('tab-timeline').addEventListener('click', () => { if (state.selected) closeDetail(); setView('timeline'); });

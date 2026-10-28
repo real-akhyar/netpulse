@@ -23,14 +23,16 @@ from netpulse.monitor.geoip import GeoIP
 from netpulse.monitor.procinfo import ProcessInspector
 from netpulse.monitor.resolve import Resolution, Resolver, registrable_domain
 from netpulse.store import HistoryStore
+from netpulse.trust import TrustStore
 
 log = logging.getLogger(__name__)
 
 
 class Pipeline:
     def __init__(self, interval: float = 2.0, out: Optional[asyncio.Queue] = None,
-                 history: Optional[HistoryStore] = None):
+                 history: Optional[HistoryStore] = None, trust: Optional[TrustStore] = None):
         self.history = history
+        self.trust_store = trust
         self.restored = 0  # endpoints replayed from history at startup
         self._known_apps: set[str] = set()  # apps history has seen online before
         self._monitor_events: asyncio.Queue = asyncio.Queue()
@@ -40,7 +42,7 @@ class Pipeline:
         self.geo = GeoIP()
         self.trackers = TrackerList()
         self.threats = ThreatIntel()
-        self.ranker = Ranker()
+        self.ranker = Ranker(trust.trust if trust else None)
         self.inspector = ProcessInspector()
         self._inspected_pids: set[int] = set()
         self.out = out
@@ -212,11 +214,32 @@ class Pipeline:
         conn.category = categorize(conn)
         # History is kept even if the socket already closed — a culprit stays caught.
         period = beacon_period(arrivals)
-        self._observe(conn, period)
+        self._observe(conn, period)  # ranker + history get the untrusted findings, so trust stays reversible
         if self.history is not None and conn.pid is not None:
             self._remember(conn, period)
+        self._apply_trust(conn)
         if conn.id in self.monitor.connections:
             self._emit({"type": "connection_update", "connection": conn})
+
+    def _apply_trust(self, conn: Connection) -> None:
+        """What the user sees: a trusted domain, or a trusted app's traffic, shows as normal —
+        except known malware, which an app's trust never hides."""
+        trust = self.ranker.trust
+        domain_trusted = trust.covers_any(conn.remote_host, conn.tracker_rule, conn.threat_indicator)
+        app_trusted = conn.app in trust.apps and not conn.threat_indicator
+        if not (domain_trusted or app_trusted) or conn.category == "normal":
+            return
+        what = f"{conn.remote_host or conn.raddr} is" if domain_trusted else f"{conn.process_name} is"
+        conn.flags = [f for f in conn.flags if f.severity == "info"] + [
+            Flag(id="trusted", severity="info", title="Trusted by you", detail=f"{what} on your trust list.")]
+        conn.category = "normal"
+
+    def reapply_trust(self) -> None:
+        """After the trust list changes: re-check every open public connection. The ranker needs
+        nothing — it folds trust in whenever it's asked."""
+        for conn in list(self.monitor.connections.values()):
+            if conn.scope == "public" and conn.id in self._host_source:
+                self._classify(conn)
 
     def _on_info(self, app: str, info: ProcessInfo) -> None:
         """Process details arrive after the app's first connections: re-check those if the app
@@ -266,23 +289,30 @@ class Pipeline:
 
     # ---- views -----------------------------------------------------------
 
+    def _explained(self, attr: str) -> set[str]:
+        """Every tracker rule / malware indicator some recorded connection accounts for."""
+        return {v for app in self.ranker.apps.values() for ep in app.endpoints.values() if (v := getattr(ep, attr))}
+
     def unattributed_tracker_lookups(self) -> list[str]:
         """Tracker domains something on this machine looked up, but no caught connection explains."""
-        attributed = {rule for app in self.ranker.apps.values() for rule in app.trackers}
-        return [d for d in self.cache_tracker_hits if d not in attributed]
+        explained = self._explained("tracker_rule")
+        trust = self.ranker.trust
+        return [d for d in self.cache_tracker_hits if d not in explained and not trust.covers(d)]
 
     def unattributed_malware_lookups(self) -> list[str]:
         """Known-malware domains looked up on this machine that no caught connection explains —
         the lookup alone is worth an alarm, even if the connection was too quick to see."""
-        attributed = {i for app in self.ranker.apps.values() for i in app.malware}
-        return [f"{d} — {desc}" for d, desc in self.cache_malware_hits.items() if d not in attributed]
+        explained = self._explained("threat_indicator")
+        trust = self.ranker.trust
+        return [f"{d} — {desc}" for d, desc in self.cache_malware_hits.items()
+                if d not in explained and not trust.covers(d)]
 
     def stats(self) -> dict:
-        apps = self.ranker.apps.values()
+        totals = self.ranker.totals()
         return {
             "apps": len(self.ranker.apps),
-            "trackers": len({rule for a in apps for rule in a.trackers}),
-            "countries": len({c for a in apps for c in a.countries}),
-            "suspicious": len({ip for a in apps for ip, kind in a.suspicious.items() if kind != "known_malware"}),
-            "malware": len({i for a in apps for i in a.malware}) + len(self.unattributed_malware_lookups()),
+            "trackers": len(totals["trackers"]),
+            "countries": len(totals["countries"]),
+            "suspicious": len(totals["suspicious"]),
+            "malware": len(totals["malware"]) + len(self.unattributed_malware_lookups()),
         }

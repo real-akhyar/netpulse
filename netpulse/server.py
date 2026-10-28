@@ -22,6 +22,7 @@ from netpulse.llm.client import Explainer, LLMConfig
 from netpulse.models import Connection
 from netpulse.pipeline import Pipeline
 from netpulse.store import HistoryStore
+from netpulse.trust import TrustStore
 
 log = logging.getLogger(__name__)
 
@@ -47,17 +48,24 @@ class BlockRequest(BaseModel):
     format: Literal["hosts", "windows_fw", "pf"] = "hosts"
 
 
+class TrustRequest(BaseModel):
+    kind: Literal["app", "domain"]
+    value: str = Field(min_length=1, max_length=1024)
+    name: Optional[str] = Field(None, max_length=200)  # display label (e.g. "chrome.exe")
+
+
 class ExplainRequest(BaseModel):
     domains: list[str] = Field(default_factory=list, max_length=30)
 
 
 class Hub:
     def __init__(self, interval: float, llm: Optional[LLMConfig] = None, min_severity: str = "low",
-                 history: Optional[HistoryStore] = None):
+                 history: Optional[HistoryStore] = None, trust: Optional[TrustStore] = None):
         self.min_severity = min_severity
         self.history = history
+        self.trust = trust or TrustStore()
         self.events: asyncio.Queue = asyncio.Queue()
-        self.pipeline = Pipeline(interval=interval, out=self.events, history=history)
+        self.pipeline = Pipeline(interval=interval, out=self.events, history=history, trust=self.trust)
         self.explainer = Explainer(llm) if llm else None
         self.clients: set[WebSocket] = set()
         self.origin: dict = dict(DEFAULT_ORIGIN)
@@ -99,6 +107,7 @@ class Hub:
             "llm": self.explainer is not None,
             "min_severity": self.min_severity,
             "history": self.history is not None,
+            "trust": {"apps": sorted(self.trust.trust.apps), "domains": sorted(self.trust.trust.domains)},
             "restored": self.pipeline.restored,
             # Bonus signal: tracker domains looked up on this machine that no caught connection explains.
             "unattributed": self.pipeline.unattributed_tracker_lookups()[:12],
@@ -211,9 +220,9 @@ class Hub:
 
 def create_app(
     interval: float = 2.0, llm: Optional[LLMConfig] = None, min_severity: str = "low",
-    history: Optional[HistoryStore] = None,
+    history: Optional[HistoryStore] = None, trust: Optional[TrustStore] = None,
 ) -> FastAPI:
-    hub = Hub(interval, llm, min_severity, history)
+    hub = Hub(interval, llm, min_severity, history, trust)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -263,6 +272,34 @@ def create_app(
             targets = ranker.block_targets(min_severity=hub.min_severity)
         result = generate(targets, req.format, extra_domains=req.domains)
         return {"text": result.text, "filename": result.filename, "domains": result.domains, "ips": result.ips}
+
+    @app.get("/api/trust")
+    async def trust_rules() -> dict:
+        return {"rules": hub.trust.rules()}
+
+    @app.post("/api/trust")
+    async def trust_add(req: TrustRequest) -> dict:
+        """Mark an app or domain as expected. Domains must be valid hostnames; apps must be ones
+        netpulse has seen (their key is the exe path or process name)."""
+        if req.kind == "domain":
+            value = safe_hostname(req.value)
+            if value is None:
+                raise HTTPException(400, "not a valid domain name")
+        else:
+            value = req.value
+            if value not in hub.pipeline.ranker.apps or any(ord(ch) < 32 for ch in value):
+                raise HTTPException(400, "unknown app")
+        name = "".join(ch for ch in (req.name or value) if ord(ch) >= 32)[:200]
+        hub.trust.add(req.kind, value, name)
+        hub.pipeline.reapply_trust()
+        return {"ok": True, "rules": hub.trust.rules()}
+
+    @app.post("/api/untrust")
+    async def trust_remove(req: TrustRequest) -> dict:
+        if not hub.trust.remove(req.kind, req.value):
+            raise HTTPException(404, "no such trust rule")
+        hub.pipeline.reapply_trust()
+        return {"ok": True, "rules": hub.trust.rules()}
 
     @app.get("/api/timeline")
     async def timeline(since: Optional[float] = None, app_key: Optional[str] = Query(None, alias="app"),

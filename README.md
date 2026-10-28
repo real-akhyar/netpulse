@@ -115,6 +115,28 @@ netpulse history            # last 7 days; --days 30, --all for info-level event
 The history stays on your machine (`%LOCALAPPDATA%\netpulse\history.db` on Windows), keeps 30 days,
 and is wiped with `netpulse history --clear`. Run `netpulse watch --no-history` to keep nothing.
 
+## Trust: mute what you expect
+
+Not every finding is a problem for you. Hit **Trust** on a culprit (or **trust** next to any flagged
+connection in its detail view) and netpulse stops calling it out:
+
+- **Trust an app** — it leaves the Caught list, the timeline and "export everything", and its
+  traffic is drawn as normal.
+- **Trust a domain** (and its subdomains) — a tracker you're fine with, or a false positive, stops
+  counting for every app.
+
+One thing trust never hides: if a trusted app contacts a **known-malware** server, it's called out
+anyway — apps get compromised. Everything you trust is listed under "Trusted by you" with an
+Untrust button, and untrusting brings the findings straight back.
+
+```bash
+netpulse trust                     # list rules (--remove VALUE, --clear)
+```
+
+Rules live in `trust.json` next to the history file and work with `--no-history` too. (Edits made
+with `netpulse trust` apply to a running dashboard after it restarts; the dashboard's own buttons
+apply instantly.)
+
 ## Optional: plain-English tracker explanations
 
 With an LLM key you can add a one-sentence "what is this tracker?" explanation to each culprit.
@@ -135,6 +157,7 @@ verdicts stay exactly as they are.
 netpulse watch [--headless] [--port 8900] [--host 127.0.0.1] [--interval 2]
                [--min-severity low] [--llm] [--no-history]
 netpulse history [--days 7] [--all] [--clear]
+netpulse trust [--remove VALUE] [--clear]
 ```
 
 - `--headless` — live terminal table and Caught summary, no browser.

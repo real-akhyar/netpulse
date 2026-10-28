@@ -16,6 +16,7 @@ from rich.text import Text
 from netpulse.models import Connection
 from netpulse.pipeline import Pipeline
 from netpulse.store import HistoryStore
+from netpulse.trust import TrustStore
 
 AUTH_NOTE = "netpulse monitors only THIS computer's own connections. Use it on machines you own."
 NEW_HIGHLIGHT_SECONDS = 4.0
@@ -109,9 +110,10 @@ def _caught_table(pipeline: Pipeline, min_severity: str) -> Table:
     return table
 
 
-async def _watch_headless(interval: float, min_severity: str, history: Optional[HistoryStore]) -> None:
+async def _watch_headless(interval: float, min_severity: str, history: Optional[HistoryStore],
+                          trust: TrustStore) -> None:
     console = Console()
-    pipeline = Pipeline(interval=interval, history=history)
+    pipeline = Pipeline(interval=interval, history=history, trust=trust)
     task = asyncio.create_task(pipeline.run())
     try:
         with Live(console=console, refresh_per_second=4, screen=False) as live:
@@ -129,7 +131,7 @@ async def _watch_headless(interval: float, min_severity: str, history: Optional[
 
 async def _watch_dashboard(
     host: str, port: int, interval: float, console: Console, llm: bool, min_severity: str,
-    history: Optional[HistoryStore],
+    history: Optional[HistoryStore], trust: TrustStore,
 ) -> None:
     import socket
     import webbrowser
@@ -150,7 +152,7 @@ async def _watch_dashboard(
             console.print(f"[red]Port {port} is already in use.[/] Try: netpulse watch --port {port + 1}")
             return
     url = f"http://{host}:{port}"
-    app = create_app(interval, llm=llm_config, min_severity=min_severity, history=history)
+    app = create_app(interval, llm=llm_config, min_severity=min_severity, history=history, trust=trust)
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
 
     async def open_when_ready() -> None:
@@ -209,10 +211,29 @@ def main(argv: list[str] | None = None) -> None:
     hist.add_argument("--days", type=float, default=7, help="how far back to show (default 7)")
     hist.add_argument("--all", action="store_true", help="include info-level events like 'went online for the first time'")
     hist.add_argument("--clear", action="store_true", help="delete all saved history")
+    trust_cmd = sub.add_parser("trust", help="list the apps and domains you've marked as trusted")
+    trust_cmd.add_argument("--remove", metavar="VALUE", help="untrust an app (exe path or name) or a domain")
+    trust_cmd.add_argument("--clear", action="store_true", help="remove every trust rule")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     console = Console()
+
+    if args.command == "trust":
+        store = TrustStore()
+        if args.clear:
+            store.clear()
+            console.print("[green]Trust list cleared.[/]")
+        elif args.remove:
+            removed = store.remove("app", args.remove) or store.remove("domain", args.remove)
+            console.print("[green]Removed.[/]" if removed else f"[yellow]No trust rule for {args.remove}[/]")
+        rules = store.rules()
+        for r in rules:
+            console.print(f"  [bold]{r['kind']:<6}[/] {r['name']}  [grey50]{r['value'] if r['value'] != r['name'] else ''}[/]")
+        if not rules and not args.clear:
+            console.print("[grey50]Nothing trusted yet — use the Trust buttons in the dashboard.[/]")
+        console.print(f"[grey50]Trust file: {store.path}[/]")
+        return
 
     if args.command == "history":
         store = HistoryStore()
@@ -233,12 +254,13 @@ def main(argv: list[str] | None = None) -> None:
         except Exception as e:  # unwritable folder etc. — run without history rather than not at all
             console.print(f"[yellow]History disabled: {e}[/]")
 
+    trust = TrustStore()
     try:
         if args.headless:
-            asyncio.run(_watch_headless(args.interval, args.min_severity, history))
+            asyncio.run(_watch_headless(args.interval, args.min_severity, history, trust))
         else:
             asyncio.run(_watch_dashboard(args.host, args.port, args.interval, console, args.llm, args.min_severity,
-                                         history))
+                                         history, trust))
     except KeyboardInterrupt:
         console.print("[grey50]stopped.[/]")
     finally:

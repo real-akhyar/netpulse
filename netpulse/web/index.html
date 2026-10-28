@@ -51,6 +51,10 @@
         <div id="caught-list" class="caught-list"></div>
         <div id="unattributed" class="unattributed" hidden></div>
         <label class="show-all"><input type="checkbox" id="show-all"> show clean apps too</label>
+        <details id="trusted-box" class="trusted-box" hidden>
+          <summary>Trusted by you (<span id="trusted-count">0</span>)</summary>
+          <div id="trusted-list"></div>
+        </details>
       </div>
 
       <div id="timeline-view" hidden>
@@ -66,6 +70,7 @@
           <button id="btn-back" type="button" class="link">← Caught</button>
           <span class="detail-buttons">
             <button id="btn-explain" type="button" hidden>What are these?</button>
+            <button id="btn-detail-trust" type="button" class="trust">Trust app</button>
             <button id="btn-detail-block" type="button" class="block">Block</button>
           </span>
         </div>
