@@ -208,8 +208,10 @@ let lastPanelHtml = '';
 function culpritRow(p) {
   const kind = p.tracker_count ? '' : isCulprit(p) ? 'mild' : 'clean';
   const fresh = state.fresh.has(p.app) ? 'fresh' : '';
-  const chips = p.top_trackers.length
-    ? `<div class="chips">${p.top_trackers.slice(0, 4).map((d) => `<span class="chip tracker">${esc(d)}</span>`).join('')}</div>`
+  const sigChip = p.info && (p.info.signature === 'unsigned' || p.info.signature === 'invalid')
+    ? `<span class="chip suspicious">${p.info.signature === 'unsigned' ? '⚠ unsigned' : '✖ bad signature'}</span>` : '';
+  const chips = p.top_trackers.length || sigChip
+    ? `<div class="chips">${sigChip}${p.top_trackers.slice(0, 4).map((d) => `<span class="chip tracker">${esc(d)}</span>`).join('')}</div>`
     : '';
   const block = isCulprit(p) ? `<button type="button" class="block" data-block="${esc(p.app)}">Block</button>` : '';
   return `<div class="culprit ${kind} ${fresh}" data-app="${esc(p.app)}">
@@ -258,6 +260,7 @@ function renderDetail() {
     <h3>${esc(p.name)}</h3>
     <div class="exe">${esc(p.exe || 'path unavailable')}${p.pid ? ` · pid ${p.pid}` : ''}</div>
     <div class="verdict">${esc(p.verdict_text)}</div>
+    ${aboutApp(p)}
     <div class="chips">
       <span class="chip">nosiness ${Math.round(p.nosiness)}</span>
       <span class="chip">${plural(p.distinct_remotes, 'remote')}</span>
@@ -290,6 +293,38 @@ function renderDetail() {
   }
 }
 let lastDetailHtml = '';
+
+function ago(seconds) {
+  const s = Math.max(0, Date.now() / 1000 - seconds);
+  if (s < 90) return 'just now';
+  if (s < 5400) return `${Math.round(s / 60)} min ago`;
+  if (s < 172800) return `${Math.round(s / 3600)} h ago`;
+  return `${Math.round(s / 86400)} days ago`;
+}
+
+const SIGNATURE = {
+  valid: (i) => `<span class="sig ok">✓ ${esc(i.signer || 'Signed')}</span> <span class="k">verified publisher</span>`,
+  unsigned: () => '<span class="sig warn">⚠ Unsigned</span> <span class="k">no verified publisher</span>',
+  invalid: (i) => `<span class="sig bad">✖ Signature invalid or untrusted</span>${i.signer ? ` <span class="k">claims ${esc(i.signer)}</span>` : ''}`,
+  unknown: () => '<span class="sig">? Publisher unknown</span>',
+  checking: () => '<span class="k">checking signature…</span>',
+};
+
+function aboutApp(p) {
+  const i = p.info;
+  if (!i) return '<div class="section">About this app</div><div class="about k">Looking up publisher and launch details…</div>';
+  const parent = i.parent_name ? `${esc(i.parent_name)} <span class="k">pid ${i.parent_pid}</span>`
+    : i.parent_pid ? `<span class="k">pid ${i.parent_pid} (no longer running)</span>` : '<span class="k">unknown</span>';
+  const started = i.started ? `${ago(i.started)} <span class="k">${esc(new Date(i.started * 1000).toLocaleString())}</span>` : '<span class="k">unknown</span>';
+  return `<div class="section">About this app</div>
+    <dl class="about">
+      <dt>Publisher</dt><dd>${SIGNATURE[i.signature](i)}</dd>
+      <dt>Started</dt><dd>${started}</dd>
+      <dt>Started by</dt><dd>${parent}</dd>
+      ${i.user ? `<dt>User</dt><dd>${esc(i.user)}</dd>` : ''}
+      <dt>Command</dt><dd>${i.cmdline ? `<code>${esc(i.cmdline)}</code>` : '<span class="k">not available (run as admin to see protected processes)</span>'}</dd>
+    </dl>`;
+}
 
 function openDetail(app) {
   state.selected = app;

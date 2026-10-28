@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from netpulse.detect.heuristics import process_flags
-from netpulse.models import SEVERITY_RANK, Connection, ProcessAgg
+from netpulse.models import SEVERITY_RANK, Connection, ProcessAgg, ProcessInfo
 
 
 @dataclass
@@ -31,6 +31,7 @@ class _App:
     suspicious_hosts: dict[str, Optional[str]] = field(default_factory=dict)  # ip -> hostname
     beacon: Optional[tuple[str, float]] = None  # (host, period)
     severity: Optional[str] = None  # worst non-info connection flag
+    info: Optional[ProcessInfo] = None
     last_seen: float = 0.0
 
 
@@ -112,6 +113,7 @@ class Ranker:
             top_trackers=[d for d, _ in app.trackers.most_common(5)],
             flags=flags,
             severity=severity,
+            info=app.info,
         )
 
     @staticmethod
@@ -160,6 +162,11 @@ class Ranker:
                 suspicious={ip: app.suspicious_hosts.get(ip) for ip in app.suspicious},
             ))
         return targets
+
+    def set_info(self, key: str, info: ProcessInfo) -> None:
+        app = self.apps.get(key)
+        if app is not None:
+            app.info = info
 
     def app_for_pid(self, pid: int) -> Optional[str]:
         return next((key for key, app in self.apps.items() if app.pid == pid), None)

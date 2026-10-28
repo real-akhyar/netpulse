@@ -17,6 +17,7 @@ from netpulse.models import Connection
 from netpulse.monitor.connections import ConnectionMonitor
 from netpulse.monitor.dnscache import DnsCache
 from netpulse.monitor.geoip import GeoIP
+from netpulse.monitor.procinfo import ProcessInspector
 from netpulse.monitor.resolve import Resolution, Resolver, registrable_domain
 
 log = logging.getLogger(__name__)
@@ -31,6 +32,8 @@ class Pipeline:
         self.geo = GeoIP()
         self.trackers = TrackerList()
         self.ranker = Ranker()
+        self.inspector = ProcessInspector()
+        self._inspected_pids: set[int] = set()
         self.out = out
         self._host_source: dict[str, Optional[str]] = {}  # connection id -> "dns_cache" | "rdns" | None
         self._tasks: set[asyncio.Task] = set()
@@ -58,9 +61,7 @@ class Pipeline:
                     self._enrich_static(conn)
                     self._emit(event)
                     if conn.scope == "public":
-                        task = asyncio.create_task(self._resolve_and_detect(conn))
-                        self._tasks.add(task)
-                        task.add_done_callback(self._tasks.discard)
+                        self._spawn(self._resolve_and_detect(conn))
                     else:
                         self._observe(conn)
                 elif kind == "connection_update":
@@ -79,6 +80,20 @@ class Pipeline:
         # pinned on an app — ranking them would put an unactionable "unknown" in the Caught panel.
         if conn.pid is not None:
             self.ranker.observe(conn, period)
+            if conn.pid not in self._inspected_pids:
+                self._inspected_pids.add(conn.pid)
+                self._spawn(self._inspect(conn.pid, conn.app))
+
+    def _spawn(self, coro) -> None:
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _inspect(self, pid: int, app: str) -> None:
+        try:
+            await self.inspector.inspect(pid, on_update=lambda info: self.ranker.set_info(app, info))
+        except Exception:
+            log.debug("process inspection failed for pid %s", pid, exc_info=True)
 
     def _enrich_static(self, conn: Connection) -> None:
         if conn.scope != "public":

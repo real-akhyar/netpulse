@@ -43,7 +43,9 @@ It finds:
 - **Bare IPs** — apps repeatedly talking to addresses with no hostname at all.
 - **Where it all goes** — country and network owner for every endpoint, drawn on the globe.
 
-Click any culprit to see every host it talked to, and why it was flagged.
+Click any culprit to see every host it talked to and why it was flagged, plus who the app really
+is: its **verified publisher** (code signature — or a warning if it's unsigned or tampered), what
+started it, when, and with which command line (obvious secrets like `--token=…` are redacted).
 
 ## Runs offline, needs no key, watches only your machine
 

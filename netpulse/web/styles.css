@@ -215,6 +215,19 @@ button.block:hover { background: rgba(255, 59, 92, 0.2); }
 #detail .exe { font-family: var(--mono); font-size: 11px; color: var(--muted); word-break: break-all; }
 #detail .verdict { margin: 10px 0; font-size: 14px; }
 #detail .section { margin-top: 14px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
+.about { margin: 6px 0 0; display: grid; grid-template-columns: 84px 1fr; gap: 4px 10px; font-size: 13px; }
+.about dt { color: var(--muted); }
+.about dd { margin: 0; min-width: 0; }
+.about .k, #detail .k { color: var(--muted); font-size: 12px; }
+.about code {
+  display: block; font: 11px/1.45 var(--mono); color: #c7d2ff;
+  background: #050811; border: 1px solid var(--line); border-radius: 6px;
+  padding: 5px 7px; white-space: pre-wrap; word-break: break-all; max-height: 92px; overflow: auto;
+}
+.sig { font-weight: 600; }
+.sig.ok { color: var(--normal); }
+.sig.warn { color: var(--suspicious); }
+.sig.bad { color: var(--tracker); }
 .flag { margin-top: 6px; padding: 6px 8px; border-left: 3px solid var(--tracker); background: rgba(255, 59, 92, 0.06); border-radius: 4px; font-size: 13px; }
 .flag.medium, .flag.low { border-left-color: var(--suspicious); background: rgba(255, 176, 32, 0.06); }
 .flag.info { border-left-color: var(--local); background: rgba(255, 255, 255, 0.03); }

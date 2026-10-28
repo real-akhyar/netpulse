@@ -37,6 +37,15 @@ class _Row(NamedTuple):
     pid: int
 
 
+def normalize_exe(path: Optional[str]) -> Optional[str]:
+    """Without admin, psutil can return exe paths with no drive ('\\Program Files\\x.exe').
+    Restore the system drive when that's where the file is, so paths match with or without admin."""
+    if not path or not path.startswith("\\") or path.startswith("\\\\"):
+        return path
+    candidate = os.environ.get("SystemDrive", "C:") + path
+    return candidate if os.path.exists(candidate) else path
+
+
 def classify_scope(ip: str) -> str:
     try:
         addr = ipaddress.ip_address(ip)
@@ -82,7 +91,7 @@ class ConnectionMonitor:
             proc = psutil.Process(pid)
             name = proc.name() or "unknown"
             try:
-                exe = proc.exe() or None
+                exe = normalize_exe(proc.exe()) or None
             except (psutil.AccessDenied, psutil.ZombieProcess, OSError):
                 exe = None
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, OSError):

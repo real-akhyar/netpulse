@@ -52,6 +52,23 @@ class Connection(BaseModel):
         return self.process_exe or self.process_name
 
 
+SignatureStatus = Literal["valid", "unsigned", "invalid", "unknown", "checking"]
+
+
+class ProcessInfo(BaseModel):
+    """Who an app is and how it was started — shown in the detail view."""
+
+    pid: int
+    exe: Optional[str] = None
+    cmdline: Optional[str] = None  # secrets in --token=… style args are redacted
+    parent_pid: Optional[int] = None
+    parent_name: Optional[str] = None
+    started: Optional[float] = None
+    user: Optional[str] = None
+    signature: SignatureStatus = "unknown"
+    signer: Optional[str] = None
+
+
 class ProcessAgg(BaseModel):
     app: str  # same key as Connection.app — links a culprit to its connections
     pid: Optional[int] = None
@@ -67,3 +84,4 @@ class ProcessAgg(BaseModel):
     top_trackers: list[str] = Field(default_factory=list)
     flags: list[Flag] = Field(default_factory=list)  # process-level, e.g. many_trackers
     severity: Optional[Severity] = None  # worst non-info finding across the app's connections
+    info: Optional[ProcessInfo] = None  # most recent process of this app that we inspected
