@@ -115,6 +115,26 @@ netpulse history            # last 7 days; --days 30, --all for info-level event
 The history stays on your machine (`%LOCALAPPDATA%\netpulse\history.db` on Windows), keeps 30 days,
 and is wiped with `netpulse history --clear`. Run `netpulse watch --no-history` to keep nothing.
 
+## Desktop alerts
+
+You don't have to watch the dashboard. netpulse pops a native notification when something new
+happens — an app phones home for the first time, a new tracker shows up, an app starts beaconing —
+and immediately for anything critical (known malware, a fake system file, `cmd.exe` going online).
+Click it to open the dashboard.
+
+It's built not to nag: each finding alerts once ever (even across restarts), news is batched per app
+with at most one summary a minute, apps already running when netpulse starts don't announce
+themselves, and trusted apps and domains stay quiet (known malware never does).
+
+```bash
+netpulse watch --alerts critical   # or: all (default), off
+netpulse test-alert                # check notifications show up on this machine
+```
+
+The 🔔 button in the dashboard switches between all / critical / off while it runs. On Windows,
+notifications appear as "Windows PowerShell" (netpulse uses PowerShell to show them, so there's
+nothing extra to install); Focus Assist can hide them.
+
 ## Trust: mute what you expect
 
 Not every finding is a problem for you. Hit **Trust** on a culprit (or **trust** next to any flagged
@@ -155,9 +175,10 @@ verdicts stay exactly as they are.
 
 ```
 netpulse watch [--headless] [--port 8900] [--host 127.0.0.1] [--interval 2]
-               [--min-severity low] [--llm] [--no-history]
+               [--min-severity low] [--llm] [--no-history] [--alerts all|critical|off]
 netpulse history [--days 7] [--all] [--clear]
 netpulse trust [--remove VALUE] [--clear]
+netpulse test-alert
 ```
 
 - `--headless` — live terminal table and Caught summary, no browser.

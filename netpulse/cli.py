@@ -13,6 +13,7 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
+from netpulse.alerts import Alerter, send_notification
 from netpulse.models import Connection
 from netpulse.pipeline import Pipeline
 from netpulse.store import HistoryStore
@@ -111,9 +112,9 @@ def _caught_table(pipeline: Pipeline, min_severity: str) -> Table:
 
 
 async def _watch_headless(interval: float, min_severity: str, history: Optional[HistoryStore],
-                          trust: TrustStore) -> None:
+                          trust: TrustStore, alert_level: str) -> None:
     console = Console()
-    pipeline = Pipeline(interval=interval, history=history, trust=trust)
+    pipeline = Pipeline(interval=interval, history=history, trust=trust, alerter=Alerter(alert_level))
     task = asyncio.create_task(pipeline.run())
     try:
         with Live(console=console, refresh_per_second=4, screen=False) as live:
@@ -131,7 +132,7 @@ async def _watch_headless(interval: float, min_severity: str, history: Optional[
 
 async def _watch_dashboard(
     host: str, port: int, interval: float, console: Console, llm: bool, min_severity: str,
-    history: Optional[HistoryStore], trust: TrustStore,
+    history: Optional[HistoryStore], trust: TrustStore, alert_level: str,
 ) -> None:
     import socket
     import webbrowser
@@ -152,7 +153,9 @@ async def _watch_dashboard(
             console.print(f"[red]Port {port} is already in use.[/] Try: netpulse watch --port {port + 1}")
             return
     url = f"http://{host}:{port}"
-    app = create_app(interval, llm=llm_config, min_severity=min_severity, history=history, trust=trust)
+    alerter = Alerter(alert_level, url=url)  # clicking a notification opens the dashboard
+    app = create_app(interval, llm=llm_config, min_severity=min_severity, history=history, trust=trust,
+                     alerter=alerter)
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
 
     async def open_when_ready() -> None:
@@ -207,6 +210,9 @@ def main(argv: list[str] | None = None) -> None:
     watch.add_argument("--min-severity", default="low", choices=["critical", "high", "medium", "low", "info"])
     watch.add_argument("--llm", action="store_true", help="optional one-sentence tracker explainer (off by default)")
     watch.add_argument("--no-history", action="store_true", help="don't save findings between runs")
+    watch.add_argument("--alerts", default="all", choices=["all", "critical", "off"],
+                       help="desktop notifications: all news, critical only, or off (default all)")
+    sub.add_parser("test-alert", help="send one desktop notification to check they show up")
     hist = sub.add_parser("history", help="show what apps did over the last days (saved findings)")
     hist.add_argument("--days", type=float, default=7, help="how far back to show (default 7)")
     hist.add_argument("--all", action="store_true", help="include info-level events like 'went online for the first time'")
@@ -218,6 +224,12 @@ def main(argv: list[str] | None = None) -> None:
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     console = Console()
+
+    if args.command == "test-alert":
+        ok = send_notification("netpulse: test alert", "If you can see this, desktop alerts work.")
+        console.print("[green]Notification sent.[/] If nothing appeared, check Windows notification settings / Focus Assist."
+                      if ok else "[red]Couldn't show a notification on this system.[/]")
+        return
 
     if args.command == "trust":
         store = TrustStore()
@@ -256,11 +268,13 @@ def main(argv: list[str] | None = None) -> None:
 
     trust = TrustStore()
     try:
+        if args.alerts != "off":
+            console.print(f"[grey50]Desktop alerts: {args.alerts} (change with --alerts critical|off).[/]")
         if args.headless:
-            asyncio.run(_watch_headless(args.interval, args.min_severity, history, trust))
+            asyncio.run(_watch_headless(args.interval, args.min_severity, history, trust, args.alerts))
         else:
             asyncio.run(_watch_dashboard(args.host, args.port, args.interval, console, args.llm, args.min_severity,
-                                         history, trust))
+                                         history, trust, args.alerts))
     except KeyboardInterrupt:
         console.print("[grey50]stopped.[/]")
     finally:

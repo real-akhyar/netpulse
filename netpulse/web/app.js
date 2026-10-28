@@ -165,6 +165,7 @@ function updateStats(s) {
   $('btn-pause').textContent = state.paused ? 'Resume' : 'Pause';
   $('map-paused').hidden = !state.paused;
   $('tab-timeline').hidden = !s.history;
+  renderAlertsButton(s.alerts || 'off');
   if (s.history && !state.awayChecked) checkAway();
   const trustKey = JSON.stringify(s.trust || {});
   if (prev && (prev.min_severity !== s.min_severity || JSON.stringify(prev.trust || {}) !== trustKey)) {
@@ -514,6 +515,34 @@ function historySection(app, liveKeys) {
     </div>`).join('');
   return `${findings ? `<div class="section">History</div><div class="timeline-list">${findings}</div>` : ''}
     ${earlierRows ? `<div class="section">Earlier connections (${earlier.length})</div><div class="conn-list">${earlierRows}</div>` : ''}`;
+}
+
+// ---------------------------------------------------------------- desktop alerts
+
+const ALERT_LEVELS = ['all', 'critical', 'off'];
+const ALERT_LABELS = { all: '🔔 all', critical: '🔔 critical', off: '🔕 off' };
+
+function renderAlertsButton(level) {
+  const b = $('btn-alerts');
+  b.textContent = ALERT_LABELS[level] || ALERT_LABELS.off;
+  b.dataset.level = level;
+}
+
+async function cycleAlerts() {
+  const current = $('btn-alerts').dataset.level || 'all';
+  const next = ALERT_LEVELS[(ALERT_LEVELS.indexOf(current) + 1) % ALERT_LEVELS.length];
+  try {
+    const res = await fetch('/api/alerts', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ level: next }),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+    renderAlertsButton(next);
+    toast({ all: 'Desktop alerts: new apps, new trackers, beacons and anything critical.',
+            critical: 'Desktop alerts: critical only (malware, fake system files…).',
+            off: 'Desktop alerts off.' }[next]);
+  } catch (err) {
+    toast(`Couldn't change alerts: ${err.message}`);
+  }
 }
 
 // ---------------------------------------------------------------- trust list
@@ -1016,6 +1045,7 @@ function bindUi() {
   });
   $('btn-detail-block').addEventListener('click', () => openBlock(state.selected));
   $('btn-explain').addEventListener('click', explainTrackers);
+  $('btn-alerts').addEventListener('click', cycleAlerts);
   $('btn-detail-trust').addEventListener('click', () => trustApp(state.selected));
   $('detail').addEventListener('click', (e) => {
     const el = e.target.closest('[data-trust-domain]');

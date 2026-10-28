@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from netpulse.action.block import generate, safe_hostname
+from netpulse.alerts import Alerter
 from netpulse.llm.client import Explainer, LLMConfig
 from netpulse.models import Connection
 from netpulse.pipeline import Pipeline
@@ -54,18 +55,25 @@ class TrustRequest(BaseModel):
     name: Optional[str] = Field(None, max_length=200)  # display label (e.g. "chrome.exe")
 
 
+class AlertsRequest(BaseModel):
+    level: Literal["all", "critical", "off"]
+
+
 class ExplainRequest(BaseModel):
     domains: list[str] = Field(default_factory=list, max_length=30)
 
 
 class Hub:
     def __init__(self, interval: float, llm: Optional[LLMConfig] = None, min_severity: str = "low",
-                 history: Optional[HistoryStore] = None, trust: Optional[TrustStore] = None):
+                 history: Optional[HistoryStore] = None, trust: Optional[TrustStore] = None,
+                 alerter: Optional[Alerter] = None):
         self.min_severity = min_severity
         self.history = history
         self.trust = trust or TrustStore()
+        self.alerter = alerter
         self.events: asyncio.Queue = asyncio.Queue()
-        self.pipeline = Pipeline(interval=interval, out=self.events, history=history, trust=self.trust)
+        self.pipeline = Pipeline(interval=interval, out=self.events, history=history, trust=self.trust,
+                                 alerter=alerter)
         self.explainer = Explainer(llm) if llm else None
         self.clients: set[WebSocket] = set()
         self.origin: dict = dict(DEFAULT_ORIGIN)
@@ -107,6 +115,7 @@ class Hub:
             "llm": self.explainer is not None,
             "min_severity": self.min_severity,
             "history": self.history is not None,
+            "alerts": self.alerter.level if self.alerter else "off",
             "trust": {"apps": sorted(self.trust.trust.apps), "domains": sorted(self.trust.trust.domains)},
             "restored": self.pipeline.restored,
             # Bonus signal: tracker domains looked up on this machine that no caught connection explains.
@@ -221,8 +230,9 @@ class Hub:
 def create_app(
     interval: float = 2.0, llm: Optional[LLMConfig] = None, min_severity: str = "low",
     history: Optional[HistoryStore] = None, trust: Optional[TrustStore] = None,
+    alerter: Optional[Alerter] = None,
 ) -> FastAPI:
-    hub = Hub(interval, llm, min_severity, history, trust)
+    hub = Hub(interval, llm, min_severity, history, trust, alerter)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -272,6 +282,14 @@ def create_app(
             targets = ranker.block_targets(min_severity=hub.min_severity)
         result = generate(targets, req.format, extra_domains=req.domains)
         return {"text": result.text, "filename": result.filename, "domains": result.domains, "ips": result.ips}
+
+    @app.post("/api/alerts")
+    async def set_alerts(req: AlertsRequest) -> dict:
+        """Desktop alert level for this run: all | critical | off."""
+        if hub.alerter is None:
+            raise HTTPException(409, "desktop alerts were disabled at startup")
+        hub.alerter.level = req.level
+        return {"alerts": req.level}
 
     @app.get("/api/trust")
     async def trust_rules() -> dict:

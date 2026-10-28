@@ -13,10 +13,11 @@ import time
 from typing import Optional
 
 from netpulse.detect.heuristics import beacon_period, categorize, connection_flags
-from netpulse.detect.rank import Ranker
+from netpulse.alerts import Alert, Alerter
+from netpulse.detect.rank import PROCESS_ALERTS, Ranker
 from netpulse.detect.threats import ThreatIntel
 from netpulse.detect.trackers import TrackerList
-from netpulse.models import Connection, Flag, ProcessInfo
+from netpulse.models import SEVERITY_RANK, Connection, Flag, ProcessInfo
 from netpulse.monitor.connections import ConnectionMonitor
 from netpulse.monitor.dnscache import DnsCache
 from netpulse.monitor.geoip import GeoIP
@@ -30,9 +31,11 @@ log = logging.getLogger(__name__)
 
 class Pipeline:
     def __init__(self, interval: float = 2.0, out: Optional[asyncio.Queue] = None,
-                 history: Optional[HistoryStore] = None, trust: Optional[TrustStore] = None):
+                 history: Optional[HistoryStore] = None, trust: Optional[TrustStore] = None,
+                 alerter: Optional[Alerter] = None):
         self.history = history
         self.trust_store = trust
+        self.alerter = alerter
         self.restored = 0  # endpoints replayed from history at startup
         self._known_apps: set[str] = set()  # apps history has seen online before
         self._monitor_events: asyncio.Queue = asyncio.Queue()
@@ -56,9 +59,16 @@ class Pipeline:
         self._cache_scanned_ts = 0.0
         if history is not None:
             self._restore()
+        if alerter is not None:
+            alerter.trust = self.ranker.trust
+            if history is not None:
+                alerter.seed(history.finding_keys())  # old news from earlier runs never alerts again
 
     async def run(self) -> None:
-        await asyncio.gather(self.monitor.run(), self.dns_cache.run(), self._consume(), self._cache_watch())
+        tasks = [self.monitor.run(), self.dns_cache.run(), self._consume(), self._cache_watch()]
+        if self.alerter is not None:
+            tasks.append(self.alerter.run())
+        await asyncio.gather(*tasks)
 
     # ---- history ---------------------------------------------------------
 
@@ -87,12 +97,20 @@ class Pipeline:
         except Exception:
             log.exception("restoring history failed; starting fresh")
 
-    def _remember(self, conn: Connection, period: Optional[float]) -> None:
+    @staticmethod
+    def _conn_findings(conn: Connection) -> list[tuple[str, str, str, str, str]]:
+        """(kind, key, severity, title, detail) for a classified connection's findings — the units
+        history and alerts both count. Keys dedupe: one row/alert per tracker, beacon IP, etc."""
+        keys = {"tracker_contact": conn.tracker_rule, "known_malware": conn.threat_indicator,
+                "beaconing": conn.raddr, "raw_ip": conn.raddr}
+        return [(f.id, keys[f.id], f.severity, f.title, f.detail) for f in conn.flags if keys.get(f.id)]
+
+    def _remember(self, conn: Connection, period: Optional[float], new_app: bool,
+                  findings: list[tuple[str, str, str, str, str]]) -> None:
         """Save a classified public connection: its endpoint row, its findings, and the app."""
         now = conn.last_seen
         self.history.record_app(conn.app, conn.process_name, conn.process_exe, None, now)
-        if conn.app not in self._known_apps:
-            self._known_apps.add(conn.app)
+        if new_app:
             self.history.record_finding(conn.app, "first_online", conn.app, conn.process_name, "info",
                                         f"{conn.process_name} went online for the first time",
                                         conn.process_exe or "", conn.remote_host or conn.raddr, now)
@@ -104,12 +122,18 @@ class Pipeline:
             "name": conn.process_name, "exe": conn.process_exe, "ts": now,
         })
         remote = conn.remote_host or conn.raddr
-        keys = {"tracker_contact": conn.tracker_rule, "known_malware": conn.threat_indicator,
-                "beaconing": conn.raddr, "raw_ip": conn.raddr}
-        for flag in conn.flags:
-            if flag.id in keys and keys[flag.id]:
-                self.history.record_finding(conn.app, flag.id, keys[flag.id], conn.process_name, flag.severity,
-                                            flag.title, flag.detail, remote, now)
+        for kind, key, severity, title, detail in findings:
+            self.history.record_finding(conn.app, kind, key, conn.process_name, severity, title, detail, remote, now)
+
+    def _alert_conn(self, conn: Connection, new_app: bool, findings: list[tuple[str, str, str, str, str]]) -> None:
+        label = conn.remote_host or conn.raddr
+        if new_app:
+            self.alerter.submit(Alert(conn.app, conn.process_name, "first_online", conn.app, "info",
+                                      f"{conn.process_name} went online for the first time", "", label))
+        for kind, key, severity, title, detail in findings:
+            if kind in ("tracker_contact", "beaconing", "known_malware"):
+                self.alerter.submit(Alert(conn.app, conn.process_name, kind, key, severity, title, detail,
+                                          key if kind == "tracker_contact" else label))
 
     def _remember_app(self, app: str, info: ProcessInfo) -> None:
         """Save process details and any app-level alerts (fake system file, cmd.exe online...)."""
@@ -215,8 +239,14 @@ class Pipeline:
         # History is kept even if the socket already closed — a culprit stays caught.
         period = beacon_period(arrivals)
         self._observe(conn, period)  # ranker + history get the untrusted findings, so trust stays reversible
-        if self.history is not None and conn.pid is not None:
-            self._remember(conn, period)
+        if conn.pid is not None:
+            new_app = conn.app not in self._known_apps
+            self._known_apps.add(conn.app)
+            findings = self._conn_findings(conn)
+            if self.history is not None:
+                self._remember(conn, period, new_app, findings)
+            if self.alerter is not None:
+                self._alert_conn(conn, new_app, findings)
         self._apply_trust(conn)
         if conn.id in self.monitor.connections:
             self._emit({"type": "connection_update", "connection": conn})
@@ -247,6 +277,11 @@ class Pipeline:
         self.ranker.set_info(app, info)
         if self.history is not None and info.signature != "checking":
             self._remember_app(app, info)
+        if self.alerter is not None and info.signature != "checking":
+            name = self.ranker.apps[app].name if app in self.ranker.apps else app
+            for flag in self.ranker.app_flags(app):
+                if flag.id in PROCESS_ALERTS and SEVERITY_RANK[flag.severity] >= SEVERITY_RANK["high"]:
+                    self.alerter.submit(Alert(app, name, flag.id, app, flag.severity, flag.title, flag.detail))
         if self.ranker.process_alert(app) is None:
             return
         for conn in list(self.monitor.connections.values()):
@@ -283,6 +318,11 @@ class Pipeline:
                     threat = self.threats.match_host(name)
                     if threat and threat.indicator not in self.cache_malware_hits:
                         self.cache_malware_hits[threat.indicator] = threat.describe()
+                        if self.alerter is not None:
+                            self.alerter.submit(Alert(
+                                "dns-cache", "Something on this computer", "known_malware", threat.indicator, "critical",
+                                f"Known malware domain looked up: {threat.indicator}",
+                                f"Something on this computer looked up {threat.indicator}, which is {threat.describe()}."))
                 self._cache_scanned_ts = newest
             except Exception:
                 log.exception("DNS cache scan failed; continuing")

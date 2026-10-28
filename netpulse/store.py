@@ -152,6 +152,10 @@ class HistoryStore:
         return self._query("SELECT * FROM endpoints WHERE app = ? AND last_seen >= ? ORDER BY last_seen DESC",
                            (app, cutoff))
 
+    def finding_keys(self) -> set[tuple[str, str, str]]:
+        """Every (app, kind, key) already on record — alerts treat these as old news."""
+        return {(r["app"], r["kind"], r["key"]) for r in self._query("SELECT app, kind, key FROM findings")}
+
     def apps(self) -> dict[str, dict]:
         return {r["app"]: r for r in self._query("SELECT * FROM apps")}
 
