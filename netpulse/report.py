@@ -26,7 +26,7 @@ from netpulse.detect.rank import Ranker
 _USER_PATH = re.compile(r"(?i)\b([a-z]:\\users\\)[^\\\s,;:)]+")
 GRADE_BANDS = [(10, "A"), (25, "B"), (45, "C"), (70, "D")]  # penalty below N -> grade
 GRADE_WORDS = {"A": "Quiet", "B": "Mostly quiet", "C": "Chatty", "D": "Leaky", "F": "Needs attention"}
-GRADE_COLORS = {"A": "#8fae7e", "B": "#a9b06a", "C": "#c9a227", "D": "#d07a3a", "F": "#e5484d"}
+GRADE_COLORS = {"A": "#8fae7e", "B": "#a9b06a", "C": "#e3b341", "D": "#d07a3a", "F": "#e5484d"}
 
 
 def redact(text: str) -> str:
@@ -196,7 +196,7 @@ def render(data: ReportData) -> str:
                 ("Tracker domains", data.trackers, "red" if data.trackers else ""),
                 ("Companies", len([c for c in data.companies if c["company"] != "Other / unknown"]), ""),
                 ("Countries", len(data.countries), ""), ("Malware", len(data.malware), "malware" if data.malware else "")]
-    sev_color = {"critical": "#e5484d", "high": "#e5484d", "medium": "#c9a227", "low": "#8a7a3a"}
+    sev_color = {"critical": "#e5484d", "high": "#e5484d", "medium": "#e3b341", "low": "#8a7a3a"}
 
     alarms = ""
     if data.malware or data.critical:

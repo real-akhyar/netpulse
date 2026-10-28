@@ -2,8 +2,8 @@
 /* netpulse dashboard — vanilla JS, no build step. Globe via bundled globe.gl (three.js inside);
    automatic 2D canvas fallback when WebGL is unavailable (or with ?map=2d). */
 
-// One red for danger (malware is told apart by weight, not hue), muted amber, warm greys.
-const COLORS = { malware: '#e5484d', tracker: '#e5484d', suspicious: '#c9a227', normal: '#7d8590', local: '#4a4a4a' };
+// One red for danger (malware is told apart by weight, not hue), one yellow, warm greys.
+const COLORS = { malware: '#e5484d', tracker: '#e5484d', suspicious: '#e3b341', normal: '#7d8590', local: '#4a4a4a' };
 const ORIGIN_COLOR = '#e6e3dc';
 const RANK = { malware: 4, tracker: 3, suspicious: 2, normal: 1, local: 0 };
 // Arcs to the same country fan out slightly by category instead of overlapping.
@@ -908,11 +908,13 @@ function createGlobeMap(container, world) {
     .polygonsTransitionDuration(0)
     .polygonLabel((f) => `<div class="globe-tip">${esc(f.properties.name)}</div>`)
     .arcStartLat('startLat').arcStartLng('startLng').arcEndLat('endLat').arcEndLng('endLng')
-    .arcColor((d) => [hexA(COLORS[d.category], d.category === 'normal' ? 0.15 : 0.35), hexA(COLORS[d.category], d.category === 'normal' ? 0.6 : 0.95)])
-    // Malware: heavier and solid; everything else a thin moving dash.
-    .arcStroke((d) => (d.category === 'malware' ? 1.4 : Math.min(0.9, (d.category === 'normal' ? 0.2 : 0.35) + Math.log2(1 + d.count) * 0.12)))
-    .arcDashLength((d) => (d.category === 'malware' ? 1 : 0.35))
-    .arcDashGap((d) => (d.category === 'malware' ? 0 : 0.4))
+    // Red and yellow lines are solid in their category colour end to end; normal ones stay faint
+    // grey so the problems stand out.
+    .arcColor((d) => (d.category === 'normal' ? [hexA(COLORS.normal, 0.12), hexA(COLORS.normal, 0.5)] : COLORS[d.category]))
+    // Malware: heaviest and still; trackers/suspicious: a long moving dash; normal: a thin dash.
+    .arcStroke((d) => (d.category === 'malware' ? 1.6 : Math.min(1.2, (d.category === 'normal' ? 0.2 : 0.6) + Math.log2(1 + d.count) * 0.12)))
+    .arcDashLength((d) => ({ malware: 1, tracker: 0.7, suspicious: 0.7 }[d.category] ?? 0.35))
+    .arcDashGap((d) => ({ malware: 0, tracker: 0.15, suspicious: 0.15 }[d.category] ?? 0.4))
     .arcDashInitialGap(() => Math.random())
     .arcDashAnimateTime((d) => ({ malware: 0, tracker: 1800, suspicious: 2600 }[d.category] ?? 4500))
     .arcAltitudeAutoScale(0.3)
@@ -931,7 +933,7 @@ function createGlobeMap(container, world) {
   material.shininess = 0;
 
   const controls = globe.controls();
-  controls.autoRotate = true;
+  controls.autoRotate = storageGet('netpulse.rotate') !== 'off';
   controls.autoRotateSpeed = 0.2;
 
   const fit = () => globe.width(container.clientWidth).height(container.clientHeight);
@@ -947,6 +949,8 @@ function createGlobeMap(container, world) {
   }
 
   return {
+    get rotating() { return controls.autoRotate; },
+    setRotating(on) { controls.autoRotate = on; },
     setOrigin(o) {
       // Look from ~20° north of the origin so polar routes (e.g. Asia -> US) read as arcs, not spikes.
       globe.pointOfView({ lat: Math.max(-60, Math.min(60, o.lat + 20)), lng: o.lon, altitude: 1.9 }, 1500);
@@ -1059,7 +1063,7 @@ function createFlatMap(canvas, world) {
       const malware = g.category === 'malware';
       ctx.lineWidth = malware ? 2.5 : Math.min(1.6, 0.8 + Math.log2(1 + g.count) * 0.25);
       ctx.setLineDash([]);
-      ctx.strokeStyle = hexA(color, malware ? 0.95 : 0.14);
+      ctx.strokeStyle = hexA(color, malware ? 0.95 : g.category === 'normal' ? 0.14 : 0.45);
       ctx.beginPath(); ctx.moveTo(sx, sy); ctx.quadraticCurveTo(cx, cy, ex, ey); ctx.stroke();
       if (!malware) {  // malware stays a solid line; the rest get a slow moving dash
         ctx.setLineDash([6, 10]);
@@ -1162,6 +1166,17 @@ async function initMap() {
   }
   map.setOrigin(state.origin);
   updateMap();
+  if (map.setRotating) {
+    const btn = $('btn-rotate');
+    const label = () => { btn.textContent = map.rotating ? 'Stop rotation' : 'Rotate'; };
+    btn.hidden = false;
+    label();
+    btn.addEventListener('click', () => {
+      map.setRotating(!map.rotating);
+      storageSet('netpulse.rotate', map.rotating ? 'on' : 'off');
+      label();
+    });
+  }
 }
 
 function bindUi() {

@@ -13,8 +13,8 @@
   --faint: #65625d;
   --red: #e5484d;
   --red-soft: rgba(229, 72, 77, 0.12);
-  --amber: #c9a227;
-  --amber-soft: rgba(201, 162, 39, 0.12);
+  --amber: #e3b341;
+  --amber-soft: rgba(227, 179, 65, 0.12);
   --grey: #7d8590;
   --green: #8fae7e;
   --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -131,7 +131,7 @@ main { display: flex; min-height: 0; }
   background: var(--panel); border: 1px solid var(--line); padding: 5px 10px; border-radius: 3px;
   pointer-events: none;
 }
-.map-paused { left: auto; right: 16px; color: var(--amber); border-color: rgba(201, 162, 39, 0.4); font-family: var(--mono); }
+.map-paused { left: auto; right: 16px; color: var(--amber); border-color: rgba(227, 179, 65, 0.4); font-family: var(--mono); }
 .map-empty[hidden], .map-paused[hidden] { display: none; }
 
 .map-tip, .globe-tip {
@@ -213,7 +213,7 @@ main { display: flex; min-height: 0; }
   max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .chip.tracker { color: var(--red); border-color: rgba(229, 72, 77, 0.35); }
-.chip.suspicious { color: var(--amber); border-color: rgba(201, 162, 39, 0.35); }
+.chip.suspicious { color: var(--amber); border-color: rgba(227, 179, 65, 0.4); }
 .chip.normal { color: var(--grey); }
 .chip.local { color: var(--faint); }
 .chip.malware { color: #fff; background: var(--red); border-color: var(--red); font-weight: 600; }
