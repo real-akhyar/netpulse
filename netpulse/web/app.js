@@ -30,7 +30,7 @@ const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const SEVERITY = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
-const isCulprit = (p) => !!p && (p.tracker_count > 0 || p.suspicious_count > 0)
+const isCulprit = (p) => !!p && (p.tracker_count > 0 || p.suspicious_count > 0 || p.alert_count > 0)
   && SEVERITY[p.severity || 'info'] >= SEVERITY[state.stats?.min_severity || 'low'];
 const hostOf = (c) => c.remote_host || c.raddr;
 const countryName = (code) => state.countryNames.get(code) || code || 'Unknown';
@@ -205,13 +205,24 @@ function renderPanel() {
 }
 let lastPanelHtml = '';
 
+const PROCESS_ALERTS = new Set(['masquerading', 'silent_tool_online', 'dual_use_tool_online', 'risky_location', 'bad_signature']);
+
+function worstAlert(p) {
+  return p.flags.filter((f) => PROCESS_ALERTS.has(f.id))
+    .sort((a, b) => SEVERITY[b.severity] - SEVERITY[a.severity])[0];
+}
+
 function culpritRow(p) {
-  const kind = p.tracker_count ? '' : isCulprit(p) ? 'mild' : 'clean';
+  const alert = worstAlert(p);
+  const hot = p.tracker_count || (alert && SEVERITY[alert.severity] >= SEVERITY.critical);
+  const kind = hot ? '' : isCulprit(p) ? 'mild' : 'clean';
+  const alertChip = alert && SEVERITY[alert.severity] >= SEVERITY.high
+    ? `<span class="chip ${alert.severity === 'critical' ? 'tracker' : 'suspicious'}">⚠ ${esc(alert.title)}</span>` : '';
   const fresh = state.fresh.has(p.app) ? 'fresh' : '';
   const sigChip = p.info && (p.info.signature === 'unsigned' || p.info.signature === 'invalid')
     ? `<span class="chip suspicious">${p.info.signature === 'unsigned' ? '⚠ unsigned' : '✖ bad signature'}</span>` : '';
-  const chips = p.top_trackers.length || sigChip
-    ? `<div class="chips">${sigChip}${p.top_trackers.slice(0, 4).map((d) => `<span class="chip tracker">${esc(d)}</span>`).join('')}</div>`
+  const chips = p.top_trackers.length || sigChip || alertChip
+    ? `<div class="chips">${alertChip}${sigChip}${p.top_trackers.slice(0, 4).map((d) => `<span class="chip tracker">${esc(d)}</span>`).join('')}</div>`
     : '';
   const block = isCulprit(p) ? `<button type="button" class="block" data-block="${esc(p.app)}">Block</button>` : '';
   return `<div class="culprit ${kind} ${fresh}" data-app="${esc(p.app)}">

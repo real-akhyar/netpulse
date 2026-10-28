@@ -13,7 +13,7 @@ from typing import Optional
 from netpulse.detect.heuristics import beacon_period, categorize, connection_flags
 from netpulse.detect.rank import Ranker
 from netpulse.detect.trackers import TrackerList
-from netpulse.models import Connection
+from netpulse.models import Connection, Flag, ProcessInfo
 from netpulse.monitor.connections import ConnectionMonitor
 from netpulse.monitor.dnscache import DnsCache
 from netpulse.monitor.geoip import GeoIP
@@ -36,6 +36,7 @@ class Pipeline:
         self._inspected_pids: set[int] = set()
         self.out = out
         self._host_source: dict[str, Optional[str]] = {}  # connection id -> "dns_cache" | "rdns" | None
+        self._definitive: dict[str, bool] = {}  # connection id -> was the hostname lookup conclusive
         self._tasks: set[asyncio.Task] = set()
         # Tracker domains seen in the OS DNS cache, whether or not we caught the connection.
         self.cache_tracker_hits: dict[str, float] = {}
@@ -69,6 +70,7 @@ class Pipeline:
                     self._emit(event)
                 elif kind == "connection_closed":
                     self._host_source.pop(event["id"], None)
+                    self._definitive.pop(event["id"], None)
                     self._emit(event)
             except Exception:
                 log.exception("enrichment failed for event %s; continuing", event.get("type"))
@@ -91,7 +93,7 @@ class Pipeline:
 
     async def _inspect(self, pid: int, app: str) -> None:
         try:
-            await self.inspector.inspect(pid, on_update=lambda info: self.ranker.set_info(app, info))
+            await self.inspector.inspect(pid, on_update=lambda info: self._on_info(app, info))
         except Exception:
             log.debug("process inspection failed for pid %s", pid, exc_info=True)
 
@@ -111,16 +113,35 @@ class Pipeline:
 
     def _apply(self, conn: Connection, res: Resolution) -> None:
         self._host_source[conn.id] = res.source
+        self._definitive[conn.id] = res.definitive
         conn.remote_host = res.host
         conn.remote_domain = registrable_domain(res.host)
         conn.tracker_rule = self.trackers.match_any(res.names)
+        self._classify(conn)
+
+    def _classify(self, conn: Connection) -> None:
+        """Flags + category for a resolved public connection, then rank and emit it."""
         arrivals = self.monitor.flow_arrivals(conn.app, conn.raddr, conn.rport)
-        conn.flags = connection_flags(conn, arrivals, resolved=res.definitive)
+        conn.flags = connection_flags(conn, arrivals, resolved=self._definitive.get(conn.id, True))
+        alert = self.ranker.process_alert(conn.app)
+        if alert is not None:
+            # A flagged app (fake system file, cmd.exe online...) makes all its traffic suspicious.
+            conn.flags.append(Flag(id="suspicious_process", severity=alert.severity, title=alert.title, detail=alert.detail))
         conn.category = categorize(conn)
         # History is kept even if the socket already closed — a culprit stays caught.
         self._observe(conn, beacon_period(arrivals))
         if conn.id in self.monitor.connections:
             self._emit({"type": "connection_update", "connection": conn})
+
+    def _on_info(self, app: str, info: ProcessInfo) -> None:
+        """Process details arrive after the app's first connections: re-check those if the app
+        turns out to be suspicious (no new DNS lookups — just flags and category)."""
+        self.ranker.set_info(app, info)
+        if self.ranker.process_alert(app) is None:
+            return
+        for conn in list(self.monitor.connections.values()):
+            if conn.app == app and conn.scope == "public" and conn.id in self._host_source:
+                self._classify(conn)
 
     async def _cache_watch(self) -> None:
         """After each DNS-cache read: upgrade connections that only had rDNS/no name, and scan

@@ -79,6 +79,7 @@ class ProcessAgg(BaseModel):
     distinct_countries: int = 0
     tracker_count: int = 0
     suspicious_count: int = 0
+    alert_count: int = 0  # suspicious-process alerts (medium+) about who the app is
     nosiness: float = 0
     verdict_text: str = ""
     top_trackers: list[str] = Field(default_factory=list)

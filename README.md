@@ -41,6 +41,13 @@ It finds:
 - **Trackers** — connections to ~59,000 known ad, analytics and telemetry domains.
 - **Beacons** — apps reconnecting to the same server on a regular timer (jitter-tolerant).
 - **Bare IPs** — apps repeatedly talking to addresses with no hostname at all.
+- **Suspicious processes** — judged by *who* the app is, not just where it connects:
+  - built-in Windows tools that should never be online (`cmd.exe`, `rundll32`, `mshta`, `wscript`…)
+    suddenly connecting out, or PowerShell/`certutil` calling out — escalated if Word or Excel
+    started them;
+  - fake system files: a `svchost.exe` or `lsass.exe` running from outside the Windows folder;
+  - programs running from Temp, Downloads, the Recycle Bin or the Public folder;
+  - binaries whose digital signature is broken (tampered after signing).
 - **Where it all goes** — country and network owner for every endpoint, drawn on the globe.
 
 Click any culprit to see every host it talked to and why it was flagged, plus who the app really

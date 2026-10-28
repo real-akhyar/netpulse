@@ -11,7 +11,11 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from netpulse.detect.heuristics import process_flags
-from netpulse.models import SEVERITY_RANK, Connection, ProcessAgg, ProcessInfo
+from netpulse.models import SEVERITY_RANK, Connection, Flag, ProcessAgg, ProcessInfo
+
+# App-level flags about *who the app is* (heuristics.process_flags), as opposed to many_trackers.
+PROCESS_ALERTS = {"masquerading", "silent_tool_online", "dual_use_tool_online", "risky_location", "bad_signature", "unsigned"}
+ALERT_WEIGHT = {"critical": 40, "high": 25, "medium": 12, "low": 3, "info": 0}
 
 
 @dataclass
@@ -32,6 +36,7 @@ class _App:
     beacon: Optional[tuple[str, float]] = None  # (host, period)
     severity: Optional[str] = None  # worst non-info connection flag
     info: Optional[ProcessInfo] = None
+    last_remote: Optional[str] = None  # "host (country)" of a recent public connection, for verdicts
     last_seen: float = 0.0
 
 
@@ -70,6 +75,7 @@ class Ranker:
         app.remotes.add(conn.raddr)
         if conn.country:
             app.countries.add(conn.country)
+        app.last_remote = (conn.remote_host or conn.raddr) + (f", {conn.country}" if conn.country else "")
         if conn.tracker_rule and conn.id not in app.tracked_ids:
             app.trackers[conn.tracker_rule] += 1
             app.tracked_ids.add(conn.id)
@@ -83,20 +89,37 @@ class Ranker:
                 app.suspicious_hosts[conn.raddr] = conn.remote_host
                 if beacon_period:
                     app.beacon = (conn.remote_host or conn.raddr, beacon_period)
-            elif flag.id == "raw_ip":
-                app.suspicious.setdefault(conn.raddr, "raw_ip")
+            elif flag.id in ("raw_ip", "suspicious_process"):
+                app.suspicious.setdefault(conn.raddr, flag.id)
                 app.suspicious_hosts.setdefault(conn.raddr, conn.remote_host)
+
+    def _flags(self, app: _App) -> list[Flag]:
+        return process_flags(app.name, set(app.trackers), app.info, online=bool(app.remotes), remote=app.last_remote)
+
+    def process_alert(self, key: str) -> Optional[Flag]:
+        """The app's worst suspicious-process alert at high/critical, if any — used to mark every
+        public connection of that app suspicious, whatever it talks to."""
+        app = self.apps.get(key)
+        if app is None:
+            return None
+        # online=True: we're asking on behalf of a public connection, even if it's the app's first.
+        flags = process_flags(app.name, set(), app.info, online=True, remote=app.last_remote)
+        alerts = [f for f in flags if f.id in PROCESS_ALERTS]
+        alerts = [f for f in alerts if SEVERITY_RANK[f.severity] >= SEVERITY_RANK["high"]]
+        return max(alerts, key=lambda f: SEVERITY_RANK[f.severity], default=None)
 
     def _aggregate(self, key: str, app: _App) -> ProcessAgg:
         tracker_count = len(app.trackers)
         suspicious_count = len(app.suspicious)
-        flags = process_flags(app.name, set(app.trackers))
+        flags = self._flags(app)
+        alerts = [f for f in flags if f.id in PROCESS_ALERTS and SEVERITY_RANK[f.severity] >= SEVERITY_RANK["medium"]]
         severity = app.severity
         for flag in flags:
             severity = _worse(severity, flag.severity)
         nosiness = min(
             100.0,
-            tracker_count * 10 + suspicious_count * 8 + len(app.countries) * 2 + len(app.remotes) * 0.5,
+            tracker_count * 10 + suspicious_count * 8 + len(app.countries) * 2 + len(app.remotes) * 0.5
+            + sum(ALERT_WEIGHT[f.severity] for f in flags if f.id in PROCESS_ALERTS),
         )
         return ProcessAgg(
             app=key,
@@ -109,7 +132,8 @@ class Ranker:
             tracker_count=tracker_count,
             suspicious_count=suspicious_count,
             nosiness=round(nosiness, 1),
-            verdict_text=self._verdict(app),
+            verdict_text=self._verdict(app, alerts),
+            alert_count=len(alerts),
             top_trackers=[d for d, _ in app.trackers.most_common(5)],
             flags=flags,
             severity=severity,
@@ -117,7 +141,12 @@ class Ranker:
         )
 
     @staticmethod
-    def _verdict(app: _App) -> str:
+    def _verdict(app: _App, alerts: list[Flag]) -> str:
+        if alerts:
+            # Who the app is beats what it talks to: lead with the worst process alert.
+            lead = max(alerts, key=lambda f: SEVERITY_RANK[f.severity]).detail
+            rest = Ranker._verdict(app, [])
+            return lead if rest.endswith("nothing suspicious.") else f"{lead} Also: {rest}"
         parts = []
         if app.trackers:
             n, c = len(app.trackers), len(app.countries)
@@ -128,8 +157,9 @@ class Ranker:
         if app.beacon:
             host, period = app.beacon
             parts.append(f"{'and ' if parts else app.name + ' '}is quietly beaconing to {host} every ~{period:.0f}s")
-        elif app.suspicious:
-            n = len(app.suspicious)
+        elif bare := [ip for ip, kind in app.suspicious.items() if kind == "raw_ip"]:
+            # Only genuine no-hostname IPs: a flagged app's other endpoints are covered by its alert.
+            n = len(bare)
             parts.append(f"{'and ' if parts else app.name + ' '}keeps reconnecting to {n} bare IP{'s' if n != 1 else ''} with no hostname")
         if not parts:
             return f"{app.name} — nothing suspicious."
@@ -144,7 +174,7 @@ class Ranker:
         floor = SEVERITY_RANK[min_severity]
         return [
             p for p in self.processes()
-            if (p.tracker_count or p.suspicious_count) and SEVERITY_RANK[p.severity or "info"] >= floor
+            if (p.tracker_count or p.suspicious_count or p.alert_count) and SEVERITY_RANK[p.severity or "info"] >= floor
         ]
 
     def block_targets(self, keys: Optional[list[str]] = None, min_severity: str = "low") -> list[BlockTarget]:
