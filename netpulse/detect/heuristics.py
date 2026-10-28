@@ -88,6 +88,8 @@ def categorize(conn: Connection) -> str:
     if conn.scope != "public":
         return "local"
     ids = {f.id for f in conn.flags}
+    if "known_malware" in ids:
+        return "malware"
     if "tracker_contact" in ids:
         return "tracker"
     if ids & {"beaconing", "raw_ip", "suspicious_process"}:

@@ -2,10 +2,10 @@
 /* netpulse dashboard — vanilla JS, no build step. Globe via bundled globe.gl (three.js inside);
    automatic 2D canvas fallback when WebGL is unavailable (or with ?map=2d). */
 
-const COLORS = { tracker: '#ff3b5c', suspicious: '#ffb020', normal: '#2de2e6', local: '#5b6478' };
-const RANK = { tracker: 3, suspicious: 2, normal: 1, local: 0 };
+const COLORS = { malware: '#ff2bd6', tracker: '#ff3b5c', suspicious: '#ffb020', normal: '#2de2e6', local: '#5b6478' };
+const RANK = { malware: 4, tracker: 3, suspicious: 2, normal: 1, local: 0 };
 // Arcs to the same country fan out slightly by category instead of overlapping.
-const OFFSET = { tracker: [1.6, 1.6], suspicious: [-1.6, -1.6], normal: [0, 0], local: [0, 0] };
+const OFFSET = { malware: [0, 2.6], tracker: [1.6, 1.6], suspicious: [-1.6, -1.6], normal: [0, 0], local: [0, 0] };
 const ARC_LINGER_MS = 60000; // keep an arc this long after its socket closes
 const HISTORY_MAX = 4000;
 const RENDER_DELAY_MS = 250;
@@ -30,7 +30,7 @@ const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ESC[c]);
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 const SEVERITY = { info: 0, low: 1, medium: 2, high: 3, critical: 4 };
-const isCulprit = (p) => !!p && (p.tracker_count > 0 || p.suspicious_count > 0 || p.alert_count > 0)
+const isCulprit = (p) => !!p && (p.tracker_count > 0 || p.suspicious_count > 0 || p.alert_count > 0 || p.malware_count > 0)
   && SEVERITY[p.severity || 'info'] >= SEVERITY[state.stats?.min_severity || 'low'];
 const hostOf = (c) => c.remote_host || c.raddr;
 const countryName = (code) => state.countryNames.get(code) || code || 'Unknown';
@@ -115,7 +115,7 @@ function upsert(c) {
   c.closedAt = null;
   state.open.set(c.id, c);
   state.history.set(c.id, c);
-  const escalated = c.lat != null && (c.category === 'tracker' || c.category === 'suspicious')
+  const escalated = c.lat != null && RANK[c.category] >= RANK.suspicious
     && (!prev || prev.category !== c.category);
   if (escalated) map.ping(c);
   trimHistory();
@@ -151,6 +151,9 @@ function updateStats(s) {
   setPill('pill-trackers', s.trackers, prev && s.trackers > prev.trackers);
   setPill('pill-countries', s.countries);
   setPill('pill-suspicious', s.suspicious, prev && s.suspicious > prev.suspicious);
+  setPill('pill-malware', s.malware || 0, prev && s.malware > (prev.malware || 0));
+  $('pill-malware').hidden = !s.malware;
+  renderMalwareAlert(s.unattributed_malware || []);
   state.paused = !!s.paused;
   document.body.classList.toggle('paused', state.paused);
   $('btn-pause').textContent = state.paused ? 'Resume' : 'Pause';
@@ -214,15 +217,17 @@ function worstAlert(p) {
 
 function culpritRow(p) {
   const alert = worstAlert(p);
-  const hot = p.tracker_count || (alert && SEVERITY[alert.severity] >= SEVERITY.critical);
+  const hot = p.malware_count || p.tracker_count || (alert && SEVERITY[alert.severity] >= SEVERITY.critical);
+  const malwareChip = p.malware_count
+    ? `<span class="chip malware">☠ known malware${p.malware_count > 1 ? ` ×${p.malware_count}` : ''}</span>` : '';
   const kind = hot ? '' : isCulprit(p) ? 'mild' : 'clean';
   const alertChip = alert && SEVERITY[alert.severity] >= SEVERITY.high
     ? `<span class="chip ${alert.severity === 'critical' ? 'tracker' : 'suspicious'}">⚠ ${esc(alert.title)}</span>` : '';
   const fresh = state.fresh.has(p.app) ? 'fresh' : '';
   const sigChip = p.info && (p.info.signature === 'unsigned' || p.info.signature === 'invalid')
     ? `<span class="chip suspicious">${p.info.signature === 'unsigned' ? '⚠ unsigned' : '✖ bad signature'}</span>` : '';
-  const chips = p.top_trackers.length || sigChip || alertChip
-    ? `<div class="chips">${alertChip}${sigChip}${p.top_trackers.slice(0, 4).map((d) => `<span class="chip tracker">${esc(d)}</span>`).join('')}</div>`
+  const chips = p.top_trackers.length || sigChip || alertChip || malwareChip
+    ? `<div class="chips">${malwareChip}${alertChip}${sigChip}${p.top_trackers.slice(0, 4).map((d) => `<span class="chip tracker">${esc(d)}</span>`).join('')}</div>`
     : '';
   const block = isCulprit(p) ? `<button type="button" class="block" data-block="${esc(p.app)}">Block</button>` : '';
   return `<div class="culprit ${kind} ${fresh}" data-app="${esc(p.app)}">
@@ -236,6 +241,16 @@ function culpritRow(p) {
     </div>
     ${block}
   </div>`;
+}
+
+function renderMalwareAlert(hits) {
+  const el = $('malware-alert');
+  el.hidden = !hits.length;
+  if (!hits.length) return;
+  el.innerHTML = `<b>☠ Known malware domain looked up on this computer</b>
+    <div>${hits.map((h) => `<div class="mono">${esc(h)}</div>`).join('')}</div>
+    <div class="k">No open connection explains it yet — whatever looked it up may connect later, or already did too
+      quickly to see. A full antivirus scan is worth running.</div>`;
 }
 
 function renderUnattributed(domains) {
@@ -271,6 +286,8 @@ function renderDetail() {
     <h3>${esc(p.name)}</h3>
     <div class="exe">${esc(p.exe || 'path unavailable')}${p.pid ? ` · pid ${p.pid}` : ''}</div>
     <div class="verdict">${esc(p.verdict_text)}</div>
+    ${p.malware.length ? `<div class="section malware-title">☠ Known malware</div>
+      ${p.malware.map((m) => `<div class="flag critical malware">${esc(m)}</div>`).join('')}` : ''}
     ${aboutApp(p)}
     <div class="chips">
       <span class="chip">nosiness ${Math.round(p.nosiness)}</span>
@@ -545,7 +562,7 @@ function createGlobeMap(container, world) {
     .arcDashLength(0.45)
     .arcDashGap(0.25)
     .arcDashInitialGap(() => Math.random())
-    .arcDashAnimateTime((d) => (d.category === 'tracker' ? 1100 : d.category === 'suspicious' ? 1700 : 3200))
+    .arcDashAnimateTime((d) => ({ malware: 700, tracker: 1100, suspicious: 1700 }[d.category] || 3200))
     .arcAltitudeAutoScale(0.3)
     .arcLabel((d) => `<div class="globe-tip">${groupTip(d.group)}</div>`)
     .pointLat('lat').pointLng('lng').pointColor('color').pointAltitude(0.012).pointRadius('radius')

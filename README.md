@@ -38,6 +38,9 @@ no business on the network at all.
 
 It finds:
 
+- **Known malware** — connections to ~214,000 listed malware, phishing and botnet domains and
+  ~33,000 threat IPs (offline snapshots of HaGeZi Threat Intelligence, URLhaus and Feodo Tracker).
+  It also raises the alarm when something merely *looks up* a known-malware domain.
 - **Trackers** — connections to ~59,000 known ad, analytics and telemetry domains.
 - **Beacons** — apps reconnecting to the same server on a regular timer (jitter-tolerant).
 - **Bare IPs** — apps repeatedly talking to addresses with no hostname at all.
@@ -80,7 +83,9 @@ rules you can copy or save:
 - **macOS pf** — a pf table for the same raw IPs.
 
 Tracker *domains* go in the hosts file, not the firewall: their IPs are shared Google/CDN servers,
-and blocking those would break unrelated sites. netpulse never applies anything itself — you
+and blocking those would break unrelated sites. For the same reason, a suspicious or malware IP that
+sits on a shared cloud/CDN network (Cloudflare, Google, Amazon…) is left out of firewall rules with
+a note — its hostname is still blocked in the hosts file. netpulse never applies anything itself — you
 review the rules and apply them. (Live one-click blocking is on the roadmap.)
 
 ## Getting named trackers from your browser
@@ -137,6 +142,9 @@ All bundled in [`netpulse/data/`](netpulse/data/SOURCES.md) and [`netpulse/web/v
 | IP → network owner | [DB-IP IP to ASN Lite](https://db-ip.com) | 2026-10 | CC BY 4.0 — *IP Geolocation by DB-IP* |
 | Tracker domains | [OISD small](https://oisd.nl) (59,447 domains) | 2026-10-28 | GPL-3.0, redistributed unmodified |
 | Tracker supplement | netpulse's curated list of major analytics/ad/telemetry domains | 2026-10-28 | MIT |
+| Malware domains & IPs | [HaGeZi Threat Intelligence Feeds](https://github.com/hagezi/dns-blocklists) (mini) | 2026-10-27 | GPL-3.0, redistributed as data |
+| Malware hosts | [URLhaus](https://urlhaus.abuse.ch) via [malware-filter](https://gitlab.com/malware-filter/urlhaus-filter) | 2026-10-28 | CC0 |
+| Botnet C2 IPs | [Feodo Tracker](https://feodotracker.abuse.ch) (abuse.ch) | 2026-10-28 | CC0 |
 | Country centroids | [Google DSPL countries.csv](https://developers.google.com/public-data/docs/canonical/countries_csv) | 2026-10-28 | CC BY 4.0 |
 | World outlines | [Natural Earth](https://www.naturalearthdata.com/) 1:110m | 2026-10-28 | Public domain |
 | Globe renderer | [globe.gl](https://github.com/vasturiano/globe.gl) 2.46.2 (includes three.js) | — | MIT |

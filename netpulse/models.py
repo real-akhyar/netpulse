@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, computed_field
 Severity = Literal["critical", "high", "medium", "low", "info"]
 SEVERITY_RANK = {"info": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
 Scope = Literal["public", "private", "loopback"]
-Category = Literal["normal", "tracker", "suspicious", "local"]
+Category = Literal["normal", "tracker", "suspicious", "malware", "local"]
 
 
 class Flag(BaseModel):
@@ -40,6 +40,8 @@ class Connection(BaseModel):
     lon: Optional[float] = None
     category: Category = "normal"
     tracker_rule: Optional[str] = None
+    threat_indicator: Optional[str] = None  # listed malware domain/IP this connection matched
+    threat: Optional[str] = None  # e.g. "listed as QakBot botnet server by Feodo Tracker (abuse.ch)"
     flags: list[Flag] = Field(default_factory=list)
     first_seen: float
     last_seen: float
@@ -80,6 +82,8 @@ class ProcessAgg(BaseModel):
     tracker_count: int = 0
     suspicious_count: int = 0
     alert_count: int = 0  # suspicious-process alerts (medium+) about who the app is
+    malware_count: int = 0  # distinct known-malware domains/IPs contacted
+    malware: list[str] = Field(default_factory=list)  # "indicator — description", up to 5
     nosiness: float = 0
     verdict_text: str = ""
     top_trackers: list[str] = Field(default_factory=list)

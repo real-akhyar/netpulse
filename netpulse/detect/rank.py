@@ -32,7 +32,9 @@ class _App:
     # What a block needs: hosts files match exact names, so keep every tracker hostname seen
     # (not just the blocklist rule), and each suspicious IP's hostname when it has one.
     tracker_hosts: set[str] = field(default_factory=set)
+    malware: dict[str, str] = field(default_factory=dict)  # listed indicator -> description
     suspicious_hosts: dict[str, Optional[str]] = field(default_factory=dict)  # ip -> hostname
+    suspicious_orgs: dict[str, Optional[str]] = field(default_factory=dict)  # ip -> network owner
     beacon: Optional[tuple[str, float]] = None  # (host, period)
     severity: Optional[str] = None  # worst non-info connection flag
     info: Optional[ProcessInfo] = None
@@ -56,6 +58,7 @@ class BlockTarget:
     exe: Optional[str]
     tracker_domains: set[str]  # exact hostnames contacted + their blocklist rules
     suspicious: dict[str, Optional[str]]  # beaconing / bare IP -> its hostname, if any
+    orgs: dict[str, Optional[str]] = field(default_factory=dict)  # suspicious IP -> network owner
 
 
 class Ranker:
@@ -81,17 +84,24 @@ class Ranker:
             app.tracked_ids.add(conn.id)
         if conn.tracker_rule:
             app.tracker_hosts.update(h for h in (conn.remote_host, conn.tracker_rule) if h)
+        if conn.threat_indicator:
+            app.malware[conn.threat_indicator] = conn.threat or "listed as malware infrastructure"
+            app.suspicious[conn.raddr] = "known_malware"  # its IP and hostname go into block exports
+            app.suspicious_hosts[conn.raddr] = conn.remote_host
         for flag in conn.flags:
             if flag.severity != "info":
                 app.severity = _worse(app.severity, flag.severity)
             if flag.id == "beaconing":
-                app.suspicious[conn.raddr] = "beaconing"
+                if app.suspicious.get(conn.raddr) != "known_malware":
+                    app.suspicious[conn.raddr] = "beaconing"
                 app.suspicious_hosts[conn.raddr] = conn.remote_host
                 if beacon_period:
                     app.beacon = (conn.remote_host or conn.raddr, beacon_period)
             elif flag.id in ("raw_ip", "suspicious_process"):
                 app.suspicious.setdefault(conn.raddr, flag.id)
                 app.suspicious_hosts.setdefault(conn.raddr, conn.remote_host)
+        if conn.raddr in app.suspicious:
+            app.suspicious_orgs[conn.raddr] = conn.org  # block exports skip shared CDN IPs
 
     def _flags(self, app: _App) -> list[Flag]:
         return process_flags(app.name, set(app.trackers), app.info, online=bool(app.remotes), remote=app.last_remote)
@@ -119,7 +129,8 @@ class Ranker:
         nosiness = min(
             100.0,
             tracker_count * 10 + suspicious_count * 8 + len(app.countries) * 2 + len(app.remotes) * 0.5
-            + sum(ALERT_WEIGHT[f.severity] for f in flags if f.id in PROCESS_ALERTS),
+            + sum(ALERT_WEIGHT[f.severity] for f in flags if f.id in PROCESS_ALERTS)
+            + len(app.malware) * ALERT_WEIGHT["critical"],
         )
         return ProcessAgg(
             app=key,
@@ -134,6 +145,8 @@ class Ranker:
             nosiness=round(nosiness, 1),
             verdict_text=self._verdict(app, alerts),
             alert_count=len(alerts),
+            malware_count=len(app.malware),
+            malware=[f"{i} — {d}" for i, d in list(app.malware.items())[:5]],
             top_trackers=[d for d, _ in app.trackers.most_common(5)],
             flags=flags,
             severity=severity,
@@ -142,11 +155,23 @@ class Ranker:
 
     @staticmethod
     def _verdict(app: _App, alerts: list[Flag]) -> str:
+        """Strongest evidence first: a listed malware server, then who the app is (process
+        alerts), then what it does (trackers, beacons, bare IPs)."""
+        leads = []
+        if app.malware:
+            indicator, desc = next(iter(app.malware.items()))
+            more = len(app.malware) - 1
+            leads.append(f"{app.name} connected to {indicator}, which is {desc}" + (
+                f" — and {more} more known-malware endpoint{'s' if more != 1 else ''}." if more else "."))
         if alerts:
-            # Who the app is beats what it talks to: lead with the worst process alert.
-            lead = max(alerts, key=lambda f: SEVERITY_RANK[f.severity]).detail
-            rest = Ranker._verdict(app, [])
-            return lead if rest.endswith("nothing suspicious.") else f"{lead} Also: {rest}"
+            leads.append(max(alerts, key=lambda f: SEVERITY_RANK[f.severity]).detail)
+        rest = Ranker._behaviour(app)
+        if not leads:
+            return rest or f"{app.name} — nothing suspicious."
+        return " ".join(leads) + (f" Also: {rest}" if rest else "")
+
+    @staticmethod
+    def _behaviour(app: _App) -> str:
         parts = []
         if app.trackers:
             n, c = len(app.trackers), len(app.countries)
@@ -161,9 +186,7 @@ class Ranker:
             # Only genuine no-hostname IPs: a flagged app's other endpoints are covered by its alert.
             n = len(bare)
             parts.append(f"{'and ' if parts else app.name + ' '}keeps reconnecting to {n} bare IP{'s' if n != 1 else ''} with no hostname")
-        if not parts:
-            return f"{app.name} — nothing suspicious."
-        return " ".join(parts) + "."
+        return " ".join(parts) + "." if parts else ""
 
     def processes(self) -> list[ProcessAgg]:
         """All apps, noisiest first."""
@@ -174,7 +197,8 @@ class Ranker:
         floor = SEVERITY_RANK[min_severity]
         return [
             p for p in self.processes()
-            if (p.tracker_count or p.suspicious_count or p.alert_count) and SEVERITY_RANK[p.severity or "info"] >= floor
+            if (p.tracker_count or p.suspicious_count or p.alert_count or p.malware_count)
+            and SEVERITY_RANK[p.severity or "info"] >= floor
         ]
 
     def block_targets(self, keys: Optional[list[str]] = None, min_severity: str = "low") -> list[BlockTarget]:
@@ -190,6 +214,7 @@ class Ranker:
                 exe=app.exe,
                 tracker_domains=set(app.tracker_hosts),
                 suspicious={ip: app.suspicious_hosts.get(ip) for ip in app.suspicious},
+                orgs={ip: app.suspicious_orgs.get(ip) for ip in app.suspicious},
             ))
         return targets
 

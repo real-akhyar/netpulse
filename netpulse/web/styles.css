@@ -9,6 +9,7 @@
   --suspicious: #ffb020;
   --normal: #2de2e6;
   --local: #5b6478;
+  --malware: #ff2bd6;
   --accent: #b46bff;
   --mono: ui-monospace, "Cascadia Code", "Consolas", monospace;
   color-scheme: dark;
@@ -108,6 +109,22 @@ main { display: flex; min-height: 0; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
 .dot.tracker { background: var(--tracker); box-shadow: 0 0 8px var(--tracker); }
 .dot.suspicious { background: var(--suspicious); box-shadow: 0 0 8px var(--suspicious); }
+.dot.malware { background: var(--malware); box-shadow: 0 0 8px var(--malware); }
+.pill-malware { border-color: rgba(255, 43, 214, 0.6); background: rgba(255, 43, 214, 0.12); }
+.pill-malware b { color: var(--malware); }
+.pill[hidden] { display: none; }
+.chip.malware { color: #ffd6f6; background: rgba(255, 43, 214, 0.18); border-color: rgba(255, 43, 214, 0.6); font-weight: 600; }
+.flag.malware { border-left-color: var(--malware); background: rgba(255, 43, 214, 0.08); }
+#detail .malware-title { color: var(--malware); }
+.malware-alert {
+  margin-bottom: 12px; padding: 10px 12px; border-radius: 10px; font-size: 13px;
+  border: 1px solid rgba(255, 43, 214, 0.6); background: rgba(255, 43, 214, 0.1);
+  box-shadow: 0 0 18px rgba(255, 43, 214, 0.25);
+}
+.malware-alert b { color: #ffd6f6; }
+.malware-alert .mono { font-family: var(--mono); font-size: 12px; margin: 4px 0; color: #ffd6f6; }
+.malware-alert .k { color: var(--muted); font-size: 12px; }
+.malware-alert[hidden] { display: none; }
 .dot.normal { background: var(--normal); box-shadow: 0 0 8px var(--normal); }
 
 .map-empty {

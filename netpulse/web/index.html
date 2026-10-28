@@ -14,6 +14,7 @@
       <div class="pill pill-tracker" id="pill-trackers"><b>0</b><span>trackers caught</span></div>
       <div class="pill" id="pill-countries"><b>0</b><span>countries</span></div>
       <div class="pill pill-suspicious" id="pill-suspicious"><b>0</b><span>suspicious</span></div>
+      <div class="pill pill-malware" id="pill-malware" hidden><b>0</b><span>malware</span></div>
     </div>
     <div class="actions">
       <button id="btn-pause" type="button">Pause</button>
@@ -27,6 +28,7 @@
       <canvas id="flatmap" hidden></canvas>
       <div id="flat-tip" class="map-tip" hidden></div>
       <div class="legend">
+        <span><i class="dot malware"></i>malware</span>
         <span><i class="dot tracker"></i>tracker</span>
         <span><i class="dot suspicious"></i>suspicious</span>
         <span><i class="dot normal"></i>normal</span>
@@ -41,6 +43,7 @@
           <h2>Caught</h2>
           <span class="sub">apps tracking you or phoning home</span>
         </div>
+        <div id="malware-alert" class="malware-alert" role="alert" hidden></div>
         <div id="caught-list" class="caught-list"></div>
         <div id="unattributed" class="unattributed" hidden></div>
         <label class="show-all"><input type="checkbox" id="show-all"> show clean apps too</label>

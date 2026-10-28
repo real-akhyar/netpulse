@@ -12,6 +12,7 @@ from typing import Optional
 
 from netpulse.detect.heuristics import beacon_period, categorize, connection_flags
 from netpulse.detect.rank import Ranker
+from netpulse.detect.threats import ThreatIntel
 from netpulse.detect.trackers import TrackerList
 from netpulse.models import Connection, Flag, ProcessInfo
 from netpulse.monitor.connections import ConnectionMonitor
@@ -31,6 +32,7 @@ class Pipeline:
         self.resolver = Resolver(self.dns_cache)
         self.geo = GeoIP()
         self.trackers = TrackerList()
+        self.threats = ThreatIntel()
         self.ranker = Ranker()
         self.inspector = ProcessInspector()
         self._inspected_pids: set[int] = set()
@@ -38,8 +40,9 @@ class Pipeline:
         self._host_source: dict[str, Optional[str]] = {}  # connection id -> "dns_cache" | "rdns" | None
         self._definitive: dict[str, bool] = {}  # connection id -> was the hostname lookup conclusive
         self._tasks: set[asyncio.Task] = set()
-        # Tracker domains seen in the OS DNS cache, whether or not we caught the connection.
+        # Tracker / malware domains seen in the OS DNS cache, whether or not we caught the connection.
         self.cache_tracker_hits: dict[str, float] = {}
+        self.cache_malware_hits: dict[str, str] = {}  # indicator -> description
         self._cache_scanned_version = 0
         self._cache_scanned_ts = 0.0
 
@@ -117,12 +120,22 @@ class Pipeline:
         conn.remote_host = res.host
         conn.remote_domain = registrable_domain(res.host)
         conn.tracker_rule = self.trackers.match_any(res.names)
+        hit = self.threats.match(conn.raddr, res.names)
+        conn.threat_indicator = hit.indicator if hit else None
+        conn.threat = hit.describe() if hit else None
         self._classify(conn)
 
     def _classify(self, conn: Connection) -> None:
         """Flags + category for a resolved public connection, then rank and emit it."""
         arrivals = self.monitor.flow_arrivals(conn.app, conn.raddr, conn.rport)
         conn.flags = connection_flags(conn, arrivals, resolved=self._definitive.get(conn.id, True))
+        if conn.threat_indicator:
+            host = conn.remote_host or conn.raddr
+            conn.flags.insert(0, Flag(
+                id="known_malware", severity="critical",
+                title=f"Known malware server: {conn.threat_indicator}",
+                detail=f"{conn.process_name} connected to {host}, which is {conn.threat}.",
+            ))
         alert = self.ranker.process_alert(conn.app)
         if alert is not None:
             # A flagged app (fake system file, cmd.exe online...) makes all its traffic suspicious.
@@ -170,6 +183,9 @@ class Pipeline:
                     rule = self.trackers.match(name)
                     if rule and rule not in self.cache_tracker_hits:
                         self.cache_tracker_hits[rule] = ts
+                    threat = self.threats.match_host(name)
+                    if threat and threat.indicator not in self.cache_malware_hits:
+                        self.cache_malware_hits[threat.indicator] = threat.describe()
                 self._cache_scanned_ts = newest
             except Exception:
                 log.exception("DNS cache scan failed; continuing")
@@ -181,11 +197,18 @@ class Pipeline:
         attributed = {rule for app in self.ranker.apps.values() for rule in app.trackers}
         return [d for d in self.cache_tracker_hits if d not in attributed]
 
+    def unattributed_malware_lookups(self) -> list[str]:
+        """Known-malware domains looked up on this machine that no caught connection explains —
+        the lookup alone is worth an alarm, even if the connection was too quick to see."""
+        attributed = {i for app in self.ranker.apps.values() for i in app.malware}
+        return [f"{d} — {desc}" for d, desc in self.cache_malware_hits.items() if d not in attributed]
+
     def stats(self) -> dict:
         apps = self.ranker.apps.values()
         return {
             "apps": len(self.ranker.apps),
             "trackers": len({rule for a in apps for rule in a.trackers}),
             "countries": len({c for a in apps for c in a.countries}),
-            "suspicious": len({ip for a in apps for ip in a.suspicious}),
+            "suspicious": len({ip for a in apps for ip, kind in a.suspicious.items() if kind != "known_malware"}),
+            "malware": len({i for a in apps for i in a.malware}) + len(self.unattributed_malware_lookups()),
         }

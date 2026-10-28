@@ -97,6 +97,7 @@ class Hub:
             "min_severity": self.min_severity,
             # Bonus signal: tracker domains looked up on this machine that no caught connection explains.
             "unattributed": self.pipeline.unattributed_tracker_lookups()[:12],
+            "unattributed_malware": self.pipeline.unattributed_malware_lookups()[:8],
         }
 
     def snapshot(self) -> list[dict]:

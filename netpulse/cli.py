@@ -19,7 +19,7 @@ AUTH_NOTE = "netpulse monitors only THIS computer's own connections. Use it on m
 NEW_HIGHLIGHT_SECONDS = 4.0
 CAUGHT_ROWS = 6
 
-CATEGORY_STYLE = {"tracker": "bold red", "suspicious": "dark_orange", "normal": "cyan", "local": "grey50"}
+CATEGORY_STYLE = {"malware": "bold magenta", "tracker": "bold red", "suspicious": "dark_orange", "normal": "cyan", "local": "grey50"}
 
 
 def _remote(conn: Connection) -> str:
@@ -39,10 +39,11 @@ def _connections_table(pipeline: Pipeline, max_rows: int) -> Table:
     stats = pipeline.stats()
     cache = "on" if pipeline.dns_cache.available else "off (rDNS only)"
 
+    malware = f"[bold magenta]{stats['malware']} MALWARE[/] · " if stats["malware"] else ""
     table = Table(
         title="[bold magenta]netpulse[/] — live connections (newest first)",
         caption=(
-            f"{stats['apps']} apps · [red]{stats['trackers']} trackers[/] · {stats['countries']} countries · "
+            f"{malware}{stats['apps']} apps · [red]{stats['trackers']} trackers[/] · {stats['countries']} countries · "
             f"[dark_orange]{stats['suspicious']} suspicious[/] · {len(conns)} open "
             f"({loopback} loopback + {remnants} closed-socket remnants hidden) · DNS cache {cache} · "
             f"every {monitor.interval:g}s · Ctrl+C to quit"
@@ -62,13 +63,15 @@ def _connections_table(pipeline: Pipeline, max_rows: int) -> Table:
         is_new = now - conn.first_seen < NEW_HIGHLIGHT_SECONDS and monitor.ticks > 1
         name_style = "grey50 italic" if conn.process_name == "unknown" else ""
         category = conn.category
-        if category == "tracker" and conn.tracker_rule:
+        if category == "malware" and conn.threat_indicator:
+            category = f"MALWARE ({conn.threat_indicator})"
+        elif category == "tracker" and conn.tracker_rule:
             category = f"tracker ({conn.tracker_rule})"
         table.add_row(
             Text("NEW", style="bold green") if is_new else Text(""),
             Text(conn.process_name, style=name_style),
             str(conn.pid) if conn.pid else "-",
-            Text(_remote(conn), style="red" if conn.category == "tracker" else ""),
+            Text(_remote(conn), style={"tracker": "red", "malware": "bold magenta"}.get(conn.category, "")),
             conn.country or "-",
             Text(category, style=CATEGORY_STYLE[conn.category]),
             conn.status,
@@ -94,6 +97,9 @@ def _caught_table(pipeline: Pipeline, min_severity: str) -> Table:
         if p.top_trackers:
             verdict.append(f"  [{', '.join(p.top_trackers[:3])}]", style="grey62")
         table.add_row(bar + Text(f" {p.nosiness:>3.0f}"), p.name, verdict)
+    for hit in pipeline.unattributed_malware_lookups()[:3]:
+        table.add_row(Text("  ☠ MALWARE", style="bold magenta"), Text("DNS cache", style="magenta"),
+                      Text(f"something on this machine looked up {hit}", style="bold magenta"))
     lookups = pipeline.unattributed_tracker_lookups()
     if lookups:
         shown = ", ".join(lookups[:6]) + (f" +{len(lookups) - 6} more" if len(lookups) > 6 else "")

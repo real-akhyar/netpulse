@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Iterable, Optional
 
 from netpulse.detect.rank import BlockTarget
+from netpulse.detect.threats import is_shared_network
 
 FORMATS = ("hosts", "windows_fw", "pf")
 FILENAMES = {"hosts": "netpulse-hosts.txt", "windows_fw": "netpulse-firewall.ps1", "pf": "netpulse-pf.conf"}
@@ -128,15 +129,16 @@ def _windows_fw(targets: list[BlockTarget]) -> BlockResult:
         lines += ["", "# Nothing to block yet."]
     for t in targets:
         name = _label(t.name)
-        ips = _clean(t.suspicious, safe_public_ip)
+        ips, shared = _blockable_ips(t)
         lines += ["", f"# --- {name}"]
         for ip in ips:
             lines.append(
                 f"New-NetFirewallRule -DisplayName 'netpulse: block {ip} ({name})' -Group '{FW_GROUP}' "
                 f"-Direction Outbound -Action Block -RemoteAddress {ip}"
             )
+        lines += _shared_notes(shared)
         total += len(ips)
-        if not ips:
+        if not ips and not shared:
             lines.append(f"# No suspicious raw IPs for {name} - block its trackers with the hosts-file export.")
         program = _ps_quote(t.exe) if t.exe else None
         if program and not _is_os_binary(t.exe):
@@ -149,8 +151,33 @@ def _windows_fw(targets: list[BlockTarget]) -> BlockResult:
     return BlockResult("\n".join(lines) + "\n", FILENAMES["windows_fw"], 0, total)
 
 
+def _blockable_ips(t: BlockTarget) -> tuple[list[str], list[tuple[str, str]]]:
+    """Split a target's IPs into ones safe to firewall and ones on shared CDN/cloud networks,
+    where one IP fronts thousands of unrelated sites (those are left to the hosts file)."""
+    ips, shared = [], []
+    for ip in _clean(t.suspicious, safe_public_ip):
+        org = t.orgs.get(ip)
+        if is_shared_network(org):
+            shared.append((ip, _label(org or "")))
+        else:
+            ips.append(ip)
+    return ips, shared
+
+
+def _shared_notes(shared: list[tuple[str, str]]) -> list[str]:
+    return [
+        f"# Skipped {ip}: it belongs to {org}, shared by many unrelated sites - blocking it would break them."
+        " Its hostname is in the hosts-file export." for ip, org in shared
+    ]
+
+
 def _pf(targets: list[BlockTarget]) -> BlockResult:
-    ips = sorted({ip for t in targets for ip in _clean(t.suspicious, safe_public_ip)})
+    ips, shared = set(), []
+    for t in targets:
+        safe, skipped = _blockable_ips(t)
+        ips.update(safe)
+        shared += skipped
+    ips = sorted(ips)
     lines = _header("pf rules (macOS)") + [
         "# Add to /etc/pf.conf (or an anchor), then: sudo pfctl -f /etc/pf.conf -e",
         "# Tracker domains: use the hosts-file export.",
@@ -158,6 +185,7 @@ def _pf(targets: list[BlockTarget]) -> BlockResult:
     ]
     if ips:
         lines += [f"table <netpulse_block> {{ {', '.join(ips)} }}", "block drop out quick to <netpulse_block>"]
-    else:
+    elif not shared:
         lines.append("# No suspicious raw IPs to block.")
+    lines += _shared_notes(shared)
     return BlockResult("\n".join(lines) + "\n", FILENAMES["pf"], 0, len(ips))
