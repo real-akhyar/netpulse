@@ -90,3 +90,5 @@ class ProcessAgg(BaseModel):
     flags: list[Flag] = Field(default_factory=list)  # process-level, e.g. many_trackers
     severity: Optional[Severity] = None  # worst non-info finding across the app's connections
     info: Optional[ProcessInfo] = None  # most recent process of this app that we inspected
+    first_seen: float = 0.0  # earliest activity, including restored history
+    last_seen: float = 0.0

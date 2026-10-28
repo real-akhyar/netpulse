@@ -21,6 +21,10 @@ const state = {
   showAll: false,
   fresh: new Set(), // apps that just became culprits (row flash)
   explanations: new Map(), // tracker domain -> one sentence (optional LLM explainer)
+  view: 'caught', // 'caught' | 'timeline'
+  appHistory: new Map(), // app -> {endpoints, findings} from /api/history
+  lastVisit: 0, // seconds; previous visit, for "while you were away"
+  awayChecked: false,
   countryNames: new Map(),
 };
 
@@ -158,6 +162,8 @@ function updateStats(s) {
   document.body.classList.toggle('paused', state.paused);
   $('btn-pause').textContent = state.paused ? 'Resume' : 'Pause';
   $('map-paused').hidden = !state.paused;
+  $('tab-timeline').hidden = !s.history;
+  if (s.history && !state.awayChecked) checkAway();
   if (prev && prev.min_severity !== s.min_severity) scheduleRender({ panel: true });
   renderUnattributed(s.unattributed || []);
 }
@@ -233,6 +239,7 @@ function culpritRow(p) {
   return `<div class="culprit ${kind} ${fresh}" data-app="${esc(p.app)}">
     <div class="glyph">${esc((p.name || '?')[0].toUpperCase())}</div>
     <div class="c-body">
+      ${p.last_seen && Date.now() / 1000 - p.last_seen > 120 ? `<div class="c-ago">last active ${ago(p.last_seen)}</div>` : ''}
       <div class="c-top"><span class="c-name" title="${esc(p.exe || p.name)}">${esc(p.name)}</span>
         <span class="c-score" title="nosiness">${Math.round(p.nosiness)}</span></div>
       <div class="meter"><i style="width:${Math.max(3, Math.min(100, p.nosiness))}%"></i></div>
@@ -301,7 +308,8 @@ function renderDetail() {
     </div>` : ''}
     ${flags.size ? `<div class="section">Findings</div>
       ${[...flags.values()].slice(0, 8).map((f) => `<div class="flag ${esc(f.severity)}"><b>${esc(f.title)}</b><br>${esc(f.detail)}</div>`).join('')}` : ''}
-    <div class="section">Connections (${sorted.length})</div>
+    ${historySection(p.app, new Set(rows.keys()))}
+    <div class="section">Connections this session (${sorted.length})</div>
     <div class="conn-list">
       ${sorted.slice(0, 150).map((r) => `<div class="conn ${r.open ? '' : 'closed'}">
         <span class="host" title="${esc(r.ip)}">${esc(r.host)}:${r.port}</span>
@@ -357,17 +365,131 @@ function aboutApp(p) {
 function openDetail(app) {
   state.selected = app;
   $('caught-view').hidden = true;
+  $('timeline-view').hidden = true;
   $('detail-view').hidden = false;
+  $('btn-back').textContent = state.view === 'timeline' ? '← Timeline' : '← Caught';
   $('panel').scrollTop = 0;
   renderDetail();
+  loadAppHistory(app);
 }
 
 function closeDetail() {
   state.selected = null;
   $('detail-view').hidden = true;
-  $('caught-view').hidden = false;
   lastDetailHtml = '';
-  renderPanel();
+  setView(state.view);
+}
+
+// ---------------------------------------------------------------- history & timeline
+
+function storageGet(key) {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function storageSet(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* private window / blocked storage: fine */ }
+}
+
+async function fetchJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${res.status}`);
+  return res.json();
+}
+
+function setView(view) {
+  state.view = view;
+  $('tab-caught').classList.toggle('active', view === 'caught');
+  $('tab-timeline').classList.toggle('active', view === 'timeline');
+  if (state.selected) return; // stay in the detail view; the tab applies when going back
+  $('caught-view').hidden = view !== 'caught';
+  $('timeline-view').hidden = view !== 'timeline';
+  if (view === 'timeline') {
+    $('away-badge').hidden = true;
+    loadTimeline();
+  } else {
+    renderPanel();
+  }
+}
+
+async function checkAway() {
+  // "While you were away": count events since the previous visit, then remember this visit.
+  state.awayChecked = true;
+  state.lastVisit = parseFloat(storageGet('netpulse.lastVisit') || '0');
+  storageSet('netpulse.lastVisit', String(Date.now() / 1000));
+  if (!state.lastVisit) return;
+  try {
+    const { events } = await fetchJson(`/api/timeline?since=${state.lastVisit}`);
+    if (events.length && state.view !== 'timeline') {
+      $('away-badge').textContent = `${events.length} new`;
+      $('away-badge').hidden = false;
+      toast(`While you were away: ${plural(events.length, 'new finding')} — see the Timeline tab.`, 5000);
+    }
+  } catch { /* history endpoint unavailable: no badge */ }
+}
+
+let lastTimelineHtml = '';
+async function loadTimeline() {
+  let events;
+  try {
+    ({ events } = await fetchJson(`/api/timeline?all=${$('timeline-all').checked}`));
+  } catch (err) {
+    $('timeline-list').innerHTML = `<div class="empty">Couldn't load the timeline (${esc(err.message)}).</div>`;
+    return;
+  }
+  const html = events.length ? timelineHtml(events)
+    : '<div class="empty">Nothing recorded yet.<br>Findings appear here the first time each app does something worth knowing — and stay after restarts.</div>';
+  if (html !== lastTimelineHtml) {
+    $('timeline-list').innerHTML = html;
+    lastTimelineHtml = html;
+  }
+}
+
+function timelineHtml(events) {
+  let day = '';
+  const out = [];
+  for (const e of events) {
+    const d = new Date(e.first_seen * 1000);
+    const label = d.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
+    if (label !== day) {
+      day = label;
+      out.push(`<div class="tl-day">${esc(label)}</div>`);
+    }
+    const isNew = state.lastVisit && e.first_seen > state.lastVisit;
+    const again = e.hits > 1 ? ` · seen ${e.hits}×, last ${ago(e.last_seen)}` : '';
+    out.push(`<div class="tl-row ${isNew ? 'new' : ''}" title="${esc(e.detail || '')}">
+      <span class="t">${d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}</span>
+      <span class="sev ${esc(e.severity)}"></span>
+      <span><span class="app" data-app="${esc(e.app)}">${esc(e.name || '?')}</span> — ${esc(e.title)}
+        <span class="seen">${esc(again)}</span></span>
+    </div>`);
+  }
+  return out.join('');
+}
+
+async function loadAppHistory(app) {
+  try {
+    const data = await fetchJson(`/api/history?app=${encodeURIComponent(app)}`);
+    if (!data.enabled) return;
+    state.appHistory.set(app, data);
+    if (state.selected === app) renderDetail();
+  } catch { /* detail view still shows live data */ }
+}
+
+function historySection(app, liveKeys) {
+  const h = state.appHistory.get(app);
+  if (!h) return '';
+  const earlier = h.endpoints.filter((r) => !liveKeys.has(`${r.host || r.ip}|${r.port}|${r.category}`)).slice(0, 60);
+  const earlierRows = earlier.map((r) => `<div class="conn closed">
+      <span class="host" title="${esc(r.ip)}">${esc(r.host || r.ip)}:${r.port}</span>
+      <span class="meta">${esc(r.country || '—')} · ${esc(ago(r.last_seen))}</span>
+      <span class="chip ${esc(r.category)}">${esc(r.category)}</span>
+    </div>`).join('');
+  const findings = h.findings.slice(0, 40).map((f) => `<div class="tl-row">
+      <span class="t">${esc(new Date(f.first_seen * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }))}</span>
+      <span class="sev ${esc(f.severity)}"></span>
+      <span>${esc(f.title)}${f.hits > 1 ? ` <span class="seen">· seen ${f.hits}×</span>` : ''}</span>
+    </div>`).join('');
+  return `${findings ? `<div class="section">History</div><div class="timeline-list">${findings}</div>` : ''}
+    ${earlierRows ? `<div class="section">Earlier connections (${earlier.length})</div><div class="conn-list">${earlierRows}</div>` : ''}`;
 }
 
 // ---------------------------------------------------------------- optional LLM explainer
@@ -816,6 +938,15 @@ function bindUi() {
   $('btn-detail-block').addEventListener('click', () => openBlock(state.selected));
   $('btn-explain').addEventListener('click', explainTrackers);
   $('btn-back').addEventListener('click', closeDetail);
+  $('tab-caught').addEventListener('click', () => { if (state.selected) closeDetail(); setView('caught'); });
+  $('tab-timeline').addEventListener('click', () => { if (state.selected) closeDetail(); setView('timeline'); });
+  $('timeline-all').addEventListener('change', loadTimeline);
+  $('timeline-list').addEventListener('click', (e) => {
+    const el = e.target.closest('[data-app]');
+    if (!el) return;
+    if (state.procs.has(el.dataset.app)) openDetail(el.dataset.app);
+    else toast("That app hasn't been active since netpulse started.");
+  });
   $('btn-export').addEventListener('click', () => openBlock(null));
   for (const tab of document.querySelectorAll('.tab')) {
     tab.addEventListener('click', () => { modal.format = tab.dataset.format; loadRules(); });
@@ -853,3 +984,5 @@ renderPanel();
 initMap().finally(connect);
 // Expire lingering arcs even when no events arrive.
 setInterval(() => scheduleRender({ map: true }), 5000);
+// Keep the timeline fresh while it's on screen.
+setInterval(() => { if (state.view === 'timeline' && !state.selected) loadTimeline(); }, 15000);

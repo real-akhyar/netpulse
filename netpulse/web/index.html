@@ -38,15 +38,27 @@
     </section>
 
     <aside id="panel">
+      <div class="panel-tabs" role="tablist">
+        <button type="button" class="panel-tab active" id="tab-caught" role="tab">Caught</button>
+        <button type="button" class="panel-tab" id="tab-timeline" role="tab" hidden>Timeline <span id="away-badge" class="away-badge" hidden></span></button>
+      </div>
+
       <div id="caught-view">
         <div class="panel-head">
-          <h2>Caught</h2>
           <span class="sub">apps tracking you or phoning home</span>
         </div>
         <div id="malware-alert" class="malware-alert" role="alert" hidden></div>
         <div id="caught-list" class="caught-list"></div>
         <div id="unattributed" class="unattributed" hidden></div>
         <label class="show-all"><input type="checkbox" id="show-all"> show clean apps too</label>
+      </div>
+
+      <div id="timeline-view" hidden>
+        <div class="panel-head">
+          <span class="sub">first time each app did each thing — saved between runs</span>
+        </div>
+        <div id="timeline-list" class="timeline-list"></div>
+        <label class="show-all"><input type="checkbox" id="timeline-all"> show info events too</label>
       </div>
 
       <div id="detail-view" hidden>

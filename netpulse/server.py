@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal, Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -21,6 +21,7 @@ from netpulse.action.block import generate, safe_hostname
 from netpulse.llm.client import Explainer, LLMConfig
 from netpulse.models import Connection
 from netpulse.pipeline import Pipeline
+from netpulse.store import HistoryStore
 
 log = logging.getLogger(__name__)
 
@@ -51,10 +52,12 @@ class ExplainRequest(BaseModel):
 
 
 class Hub:
-    def __init__(self, interval: float, llm: Optional[LLMConfig] = None, min_severity: str = "low"):
+    def __init__(self, interval: float, llm: Optional[LLMConfig] = None, min_severity: str = "low",
+                 history: Optional[HistoryStore] = None):
         self.min_severity = min_severity
+        self.history = history
         self.events: asyncio.Queue = asyncio.Queue()
-        self.pipeline = Pipeline(interval=interval, out=self.events)
+        self.pipeline = Pipeline(interval=interval, out=self.events, history=history)
         self.explainer = Explainer(llm) if llm else None
         self.clients: set[WebSocket] = set()
         self.origin: dict = dict(DEFAULT_ORIGIN)
@@ -95,6 +98,8 @@ class Hub:
             "paused": self.paused,
             "llm": self.explainer is not None,
             "min_severity": self.min_severity,
+            "history": self.history is not None,
+            "restored": self.pipeline.restored,
             # Bonus signal: tracker domains looked up on this machine that no caught connection explains.
             "unattributed": self.pipeline.unattributed_tracker_lookups()[:12],
             "unattributed_malware": self.pipeline.unattributed_malware_lookups()[:8],
@@ -204,8 +209,11 @@ class Hub:
             self.clients.discard(ws)
 
 
-def create_app(interval: float = 2.0, llm: Optional[LLMConfig] = None, min_severity: str = "low") -> FastAPI:
-    hub = Hub(interval, llm, min_severity)
+def create_app(
+    interval: float = 2.0, llm: Optional[LLMConfig] = None, min_severity: str = "low",
+    history: Optional[HistoryStore] = None,
+) -> FastAPI:
+    hub = Hub(interval, llm, min_severity, history)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -255,6 +263,28 @@ def create_app(interval: float = 2.0, llm: Optional[LLMConfig] = None, min_sever
             targets = ranker.block_targets(min_severity=hub.min_severity)
         result = generate(targets, req.format, extra_domains=req.domains)
         return {"text": result.text, "filename": result.filename, "domains": result.domains, "ips": result.ips}
+
+    @app.get("/api/timeline")
+    async def timeline(since: Optional[float] = None, app_key: Optional[str] = Query(None, alias="app"),
+                       all: bool = False, limit: int = Query(300, le=2000)) -> dict:
+        """What each app did and when — first occurrence of every finding, newest first.
+        Default hides info-level events (like "X went online for the first time")."""
+        if hub.history is None:
+            return {"enabled": False, "events": []}
+        levels = None if all else {"low", "medium", "high", "critical"}
+        events = await asyncio.to_thread(hub.history.timeline, since, app_key, limit, levels)
+        return {"enabled": True, "events": events}
+
+    @app.get("/api/history")
+    async def app_history(app_key: str = Query(..., alias="app")) -> dict:
+        """One app's saved endpoints and findings — fills the detail view after a restart."""
+        if hub.history is None:
+            return {"enabled": False, "endpoints": [], "findings": []}
+        endpoints = await asyncio.to_thread(hub.history.endpoints, app_key)
+        findings = await asyncio.to_thread(hub.history.timeline, None, app_key, 200, None)
+        for row in endpoints:
+            row.pop("flags", None)
+        return {"enabled": True, "endpoints": endpoints[:300], "findings": findings}
 
     @app.post("/api/explain")
     async def explain(req: ExplainRequest) -> dict:

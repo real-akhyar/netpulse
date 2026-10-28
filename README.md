@@ -101,6 +101,20 @@ trackers from your browser, either:
 [docs/DEMO.md](docs/DEMO.md) has the exact commands, how to undo them, and a 2-minute pre-flight
 check.
 
+## History: what happened while you were away
+
+netpulse remembers. Findings are saved to a small local database, so culprits are still there after
+a restart, and the dashboard's **Timeline** tab shows the first time each app did each thing —
+"python.exe contacted google-analytics.com", "svchost.exe started running from Temp" — grouped by
+day, with a badge for anything new since your last visit. From the terminal:
+
+```bash
+netpulse history            # last 7 days; --days 30, --all for info-level events
+```
+
+The history stays on your machine (`%LOCALAPPDATA%\netpulse\history.db` on Windows), keeps 30 days,
+and is wiped with `netpulse history --clear`. Run `netpulse watch --no-history` to keep nothing.
+
 ## Optional: plain-English tracker explanations
 
 With an LLM key you can add a one-sentence "what is this tracker?" explanation to each culprit.
@@ -119,7 +133,8 @@ verdicts stay exactly as they are.
 
 ```
 netpulse watch [--headless] [--port 8900] [--host 127.0.0.1] [--interval 2]
-               [--min-severity low] [--llm]
+               [--min-severity low] [--llm] [--no-history]
+netpulse history [--days 7] [--all] [--clear]
 ```
 
 - `--headless` — live terminal table and Caught summary, no browser.

@@ -166,6 +166,37 @@ main { display: flex; min-height: 0; }
   padding: 14px 16px;
 }
 .panel-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.panel-tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.panel-tab {
+  background: none; border: 0; border-bottom: 2px solid transparent; border-radius: 0;
+  padding: 4px 10px 6px; font-size: 16px; font-weight: 600; color: var(--muted);
+}
+.panel-tab:hover { background: none; color: var(--text); }
+.panel-tab.active { color: var(--tracker); border-bottom-color: var(--tracker); text-shadow: 0 0 10px rgba(255, 59, 92, 0.45); }
+.panel-tab[hidden] { display: none; }
+.away-badge {
+  font-size: 11px; font-weight: 700; color: #fff; background: var(--tracker);
+  border-radius: 999px; padding: 1px 7px; margin-left: 4px; vertical-align: 2px;
+}
+.away-badge[hidden] { display: none; }
+.timeline-list { display: flex; flex-direction: column; gap: 4px; }
+.tl-day { margin: 10px 0 2px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
+.tl-row {
+  display: grid; grid-template-columns: 62px 10px 1fr; gap: 8px; align-items: start;
+  padding: 6px 8px; border-radius: 8px; background: rgba(255, 255, 255, 0.025); font-size: 13px;
+}
+.tl-row.new { box-shadow: inset 3px 0 0 var(--tracker); }
+.tl-row .t { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; padding-top: 1px; }
+.tl-row .sev { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; }
+.tl-row .app { font-weight: 600; cursor: pointer; }
+.tl-row .app:hover { text-decoration: underline; }
+.tl-row .seen { color: var(--muted); font-size: 11px; }
+.sev.critical { background: var(--malware); box-shadow: 0 0 6px var(--malware); }
+.sev.high { background: var(--tracker); }
+.sev.medium { background: var(--suspicious); }
+.sev.low { background: #e8d36a; }
+.sev.info { background: var(--local); }
+.c-ago { color: var(--muted); font-size: 11px; margin-top: 4px; }
 .panel-head h2 { margin: 0; font-size: 18px; color: var(--tracker); text-shadow: 0 0 10px rgba(255, 59, 92, 0.45); }
 .panel-head .sub { color: var(--muted); font-size: 12px; }
 

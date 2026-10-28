@@ -39,6 +39,7 @@ class _App:
     severity: Optional[str] = None  # worst non-info connection flag
     info: Optional[ProcessInfo] = None
     last_remote: Optional[str] = None  # "host (country)" of a recent public connection, for verdicts
+    first_seen: float = 0.0
     last_seen: float = 0.0
 
 
@@ -71,6 +72,7 @@ class Ranker:
         if app is None:
             app = self.apps[conn.app] = _App(name=conn.process_name, exe=conn.process_exe)
         app.pid = conn.pid or app.pid
+        app.first_seen = min(app.first_seen or conn.first_seen, conn.first_seen)
         app.last_seen = max(app.last_seen, conn.last_seen)
         app.connection_ids.add(conn.id)
         if conn.scope != "public":
@@ -105,6 +107,10 @@ class Ranker:
 
     def _flags(self, app: _App) -> list[Flag]:
         return process_flags(app.name, set(app.trackers), app.info, online=bool(app.remotes), remote=app.last_remote)
+
+    def app_flags(self, key: str) -> list[Flag]:
+        app = self.apps.get(key)
+        return self._flags(app) if app else []
 
     def process_alert(self, key: str) -> Optional[Flag]:
         """The app's worst suspicious-process alert at high/critical, if any — used to mark every
@@ -151,6 +157,8 @@ class Ranker:
             flags=flags,
             severity=severity,
             info=app.info,
+            first_seen=app.first_seen,
+            last_seen=app.last_seen,
         )
 
     @staticmethod

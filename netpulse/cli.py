@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import logging
 import time
+from typing import Optional
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -14,6 +15,7 @@ from rich.text import Text
 
 from netpulse.models import Connection
 from netpulse.pipeline import Pipeline
+from netpulse.store import HistoryStore
 
 AUTH_NOTE = "netpulse monitors only THIS computer's own connections. Use it on machines you own."
 NEW_HIGHLIGHT_SECONDS = 4.0
@@ -107,9 +109,9 @@ def _caught_table(pipeline: Pipeline, min_severity: str) -> Table:
     return table
 
 
-async def _watch_headless(interval: float, min_severity: str) -> None:
+async def _watch_headless(interval: float, min_severity: str, history: Optional[HistoryStore]) -> None:
     console = Console()
-    pipeline = Pipeline(interval=interval)
+    pipeline = Pipeline(interval=interval, history=history)
     task = asyncio.create_task(pipeline.run())
     try:
         with Live(console=console, refresh_per_second=4, screen=False) as live:
@@ -126,7 +128,8 @@ async def _watch_headless(interval: float, min_severity: str) -> None:
 
 
 async def _watch_dashboard(
-    host: str, port: int, interval: float, console: Console, llm: bool, min_severity: str
+    host: str, port: int, interval: float, console: Console, llm: bool, min_severity: str,
+    history: Optional[HistoryStore],
 ) -> None:
     import socket
     import webbrowser
@@ -147,7 +150,7 @@ async def _watch_dashboard(
             console.print(f"[red]Port {port} is already in use.[/] Try: netpulse watch --port {port + 1}")
             return
     url = f"http://{host}:{port}"
-    app = create_app(interval, llm=llm_config, min_severity=min_severity)
+    app = create_app(interval, llm=llm_config, min_severity=min_severity, history=history)
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="warning"))
 
     async def open_when_ready() -> None:
@@ -163,6 +166,33 @@ async def _watch_dashboard(
         opener.cancel()
 
 
+SEVERITY_COLOR = {"critical": "bold magenta", "high": "bold red", "medium": "dark_orange", "low": "yellow", "info": "grey50"}
+
+
+def _show_history(console: Console, store: HistoryStore, days: float, show_all: bool) -> None:
+    """`netpulse history`: the timeline in the terminal — what each app did and when."""
+    levels = None if show_all else {"low", "medium", "high", "critical"}
+    events = store.timeline(since=time.time() - days * 86400, limit=500, min_severity=levels)
+    table = Table(title=f"[bold magenta]netpulse[/] — timeline, last {days:g} day(s) (newest first)", expand=True)
+    table.add_column("First seen", no_wrap=True)
+    table.add_column("App", style="bold", no_wrap=True, max_width=24)
+    table.add_column("Severity", no_wrap=True)
+    table.add_column("What happened", ratio=1)
+    table.add_column("Seen", justify="right", no_wrap=True)
+    for e in events:
+        table.add_row(
+            time.strftime("%Y-%m-%d %H:%M", time.localtime(e["first_seen"])),
+            e["name"] or "?",
+            Text(e["severity"], style=SEVERITY_COLOR.get(e["severity"], "")),
+            e["title"],
+            f"×{e['hits']}",
+        )
+    if not events:
+        table.add_row("", Text("nothing recorded yet", style="grey50"), "", "run `netpulse watch` for a while", "")
+    console.print(table)
+    console.print(f"[grey50]History file: {store.path}  (clear it with: netpulse history --clear)[/]")
+
+
 def main(argv: list[str] | None = None) -> None:
     # Plain ASCII: argparse prints in the console's legacy code page on Windows.
     parser = argparse.ArgumentParser(prog="netpulse", description="See what your apps are really doing - and block it.")
@@ -174,20 +204,46 @@ def main(argv: list[str] | None = None) -> None:
     watch.add_argument("--headless", action="store_true", help="live terminal table, no dashboard")
     watch.add_argument("--min-severity", default="low", choices=["critical", "high", "medium", "low", "info"])
     watch.add_argument("--llm", action="store_true", help="optional one-sentence tracker explainer (off by default)")
+    watch.add_argument("--no-history", action="store_true", help="don't save findings between runs")
+    hist = sub.add_parser("history", help="show what apps did over the last days (saved findings)")
+    hist.add_argument("--days", type=float, default=7, help="how far back to show (default 7)")
+    hist.add_argument("--all", action="store_true", help="include info-level events like 'went online for the first time'")
+    hist.add_argument("--clear", action="store_true", help="delete all saved history")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
     console = Console()
+
+    if args.command == "history":
+        store = HistoryStore()
+        if args.clear:
+            store.clear()
+            console.print(f"[green]History cleared[/] ({store.path}).")
+        else:
+            _show_history(console, store, args.days, args.all)
+        return
+
     console.print(f"[yellow]{AUTH_NOTE}[/]")
     console.print("[grey50]Offline data: DB-IP Country/ASN Lite + OISD small tracker list (bundled in netpulse/data/).[/]")
+    history = None
+    if not args.no_history:
+        try:
+            history = HistoryStore()
+            console.print(f"[grey50]History: saving findings to {history.path} (disable with --no-history).[/]")
+        except Exception as e:  # unwritable folder etc. — run without history rather than not at all
+            console.print(f"[yellow]History disabled: {e}[/]")
 
     try:
         if args.headless:
-            asyncio.run(_watch_headless(args.interval, args.min_severity))
+            asyncio.run(_watch_headless(args.interval, args.min_severity, history))
         else:
-            asyncio.run(_watch_dashboard(args.host, args.port, args.interval, console, args.llm, args.min_severity))
+            asyncio.run(_watch_dashboard(args.host, args.port, args.interval, console, args.llm, args.min_severity,
+                                         history))
     except KeyboardInterrupt:
         console.print("[grey50]stopped.[/]")
+    finally:
+        if history is not None:
+            history.flush()
 
 
 if __name__ == "__main__":
